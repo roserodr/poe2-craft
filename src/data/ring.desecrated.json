@@ -1,0 +1,89 @@
+[
+  {
+    "id": "DesRingLife",
+    "type": "Prefix",
+    "affix": "Ulaman's",
+    "boss": "Ulaman",
+    "group": "IncreasedLife",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(50-70) to maximum Life"
+    ],
+    "tags": [
+      "life",
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesRingMana",
+    "type": "Prefix",
+    "affix": "Amanamu's",
+    "boss": "Amanamu",
+    "group": "IncreasedMana",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(60-80) to maximum Mana"
+    ],
+    "tags": [
+      "mana",
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesRingAllRes",
+    "type": "Suffix",
+    "affix": "Kurgal's",
+    "boss": "Kurgal",
+    "group": "AllResistances",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(10-15)% to all Elemental Resistances"
+    ],
+    "tags": [
+      "resistance",
+      "elemental",
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesRingChaosRes",
+    "type": "Suffix",
+    "affix": "Amanamu's",
+    "boss": "Amanamu",
+    "group": "ChaosResistance",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(15-22)% to Chaos Resistance"
+    ],
+    "tags": [
+      "resistance",
+      "chaos",
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesRingAllAttributes",
+    "type": "Suffix",
+    "affix": "Kurgal's",
+    "boss": "Kurgal",
+    "group": "AllAttributes",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(8-12) to all Attributes"
+    ],
+    "tags": [
+      "attribute",
+      "desecrated"
+    ],
+    "desecrated": true
+  }
+]

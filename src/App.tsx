@@ -7,12 +7,19 @@ import {
   ITEM_CLASSES,
   setItemClass,
 } from "./engine/mods";
-import type { ModDef } from "./engine/types";
-import { newItem, CURRENCY, OMENS } from "./engine/item";
+import type { ModDef, Rarity } from "./engine/types";
+import { buildStartItem, CURRENCY, OMENS } from "./engine/item";
 import { RNG } from "./engine/rng";
 import { parse, parseCondition } from "./dsl/parser";
 import { run, type RunResult } from "./dsl/interpreter";
-import { runBatchAsync, type BatchResult, type Stats } from "./dsl/batch";
+import {
+  runBatchAsync,
+  runComparisonsAsync,
+  extractComparisons,
+  type BatchResult,
+  type Stats,
+  type ComparisonGroup,
+} from "./dsl/batch";
 import type { Cond } from "./dsl/ast";
 import { ItemCard } from "./components/ItemCard";
 import {
@@ -24,6 +31,16 @@ import {
   PRICE_UPDATED,
   PRICE_SOURCE,
 } from "./engine/prices";
+import {
+  SETTINGS_VERSION,
+  encodeSettings,
+  decodeSettings,
+  loadSaves,
+  putSave,
+  deleteSave,
+  type SimSettings,
+  type BaseUnit,
+} from "./settings";
 
 const LOG_RENDER_LIMIT = 500; // cap rendered step-log rows so a huge run can't freeze the UI
 
@@ -60,7 +77,6 @@ function loadPrices(): Record<string, number> {
   return fullPrices(DEFAULT_PRICES);
 }
 
-type BaseUnit = "ex" | "chaos" | "div";
 const BASE_AMOUNT_KEY = "poe2craft.baseAmount";
 const BASE_UNIT_KEY = "poe2craft.baseUnit";
 
@@ -90,24 +106,23 @@ function unitFactor(unit: BaseUnit, prices: Record<string, number>): number {
   return 1;
 }
 
-const SAMPLE = `# Essence + fracture flow (0.5 mechanics):
-# 1. transmute to Magic, then a Greater essence upgrades it to
-#    Rare with a guaranteed flat-physical prefix.
-# 2. exalt-fill toward 4 mods.
-# 3. lock the phys prefix with a Fracturing Orb so it survives.
-# 4. desecrate (adds a blank affix) then reveal it.
+const SAMPLE = `# Compare two ways to chase a tier-1/2 physical-damage prefix.
+# Start Rare with an alchemy, then fill the open prefixes.
+# Each 'option' is simulated on its own and the success condition
+# is the one on 'compare' — hit "Simulate" to see them side by side.
 
-transmute
-essence "greater abrasion"
-while affixes < 4 {
-  exalt
-}
-if has prefix "physical damage" and not fractured {
-  fracture
-}
-if not desecrated and not unrevealed and open suffix {
-  desecrate
-  reveal
+alchemy
+compare has prefix "physical damage" tier <= 2 {
+  option "exalt fill" {
+    while open prefix {
+      exalt
+    }
+  }
+  option "perfect exalt" {
+    while open prefix {
+      perfect exalt
+    }
+  }
 }
 `;
 
@@ -121,10 +136,32 @@ if open prefix {
 }
 `;
 
+const AMULET_SAMPLE = `# Amulet: chase all-resistances + spirit
+alchemy
+while not has "all elemental resistances" {
+  chaos
+}
+if open prefix {
+  exalt
+}
+`;
+
+const RING_SAMPLE = `# Ring: chase all-resistances + life
+alchemy
+while not has "all elemental resistances" {
+  chaos
+}
+if open prefix {
+  exalt
+}
+`;
+
 // per-class default script + success metric
 const CLASS_DEFAULTS: Record<string, { sample: string; target: string; base?: string }> = {
   bow: { sample: SAMPLE, target: 'has prefix "increased physical damage"', base: "Heavy Bow" },
   dexIntBoots: { sample: BOOTS_SAMPLE, target: 'has "movement speed"', base: "Daggerfoot Shoes" },
+  amulet: { sample: AMULET_SAMPLE, target: 'has "all elemental resistances"', base: "Stellar Amulet" },
+  ring: { sample: RING_SAMPLE, target: 'has "all elemental resistances"', base: "Prismatic Ring" },
 };
 
 const classBases = (key: string) => ITEM_CLASSES.find((c) => c.key === key)!.bases;
@@ -136,6 +173,8 @@ export default function App() {
     bases.find((b) => b.name === CLASS_DEFAULTS.bow.base)?.name ?? bases[0].name
   );
   const [ilvl, setIlvl] = useState(82);
+  const [startRarity, setStartRarity] = useState<Rarity>("Normal");
+  const [startMods, setStartMods] = useState("");
   const [seed, setSeed] = useState(12345);
   const [script, setScript] = useState(SAMPLE);
   const [target, setTarget] = useState('has prefix "increased physical damage"');
@@ -145,6 +184,7 @@ export default function App() {
 
   const [result, setResult] = useState<RunResult | null>(null);
   const [batch, setBatch] = useState<BatchResult | null>(null);
+  const [comparison, setComparison] = useState<ComparisonGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [simulating, setSimulating] = useState(false);
@@ -201,6 +241,17 @@ export default function App() {
     [bases, baseName]
   );
 
+  /** Build the configured starting item (rarity + pre-applied mods). */
+  function makeStart(rngSeed: number) {
+    return buildStartItem(base, ilvl, startRarity, startMods.split("\n"), new RNG(rngSeed ^ 0x5eed));
+  }
+  // preview/validation of the start config (errors are seed-independent)
+  const startBuild = useMemo(
+    () => makeStart(seed),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [base, ilvl, startRarity, startMods, seed]
+  );
+
   function changeClass(key: string) {
     setItemClass(key); // engine reads from this class now
     setClassKey(key);
@@ -209,9 +260,107 @@ export default function App() {
     setBaseName((d?.base && cb.find((b) => b.name === d.base)?.name) ?? cb[0].name);
     setScript(d?.sample ?? "");
     setTarget(d?.target ?? "");
+    setStartRarity("Normal");
+    setStartMods("");
     setResult(null);
     setBatch(null);
+    setComparison(null);
     setError(null);
+  }
+
+  // ---- save / load whole-sim settings ----
+  const currentSettings: SimSettings = useMemo(
+    () => ({
+      v: SETTINGS_VERSION,
+      classKey,
+      baseName,
+      ilvl,
+      startRarity,
+      startMods,
+      script,
+      target,
+      seed,
+      batchRuns,
+      stopMode,
+      stopValue,
+      baseAmount,
+      baseUnit,
+    }),
+    [
+      classKey, baseName, ilvl, startRarity, startMods, script, target, seed,
+      batchRuns, stopMode, stopValue, baseAmount, baseUnit,
+    ]
+  );
+  const shareCode = useMemo(() => encodeSettings(currentSettings), [currentSettings]);
+  const [importText, setImportText] = useState("");
+  const [shareMsg, setShareMsg] = useState<string | null>(null);
+  // named browser-local saves
+  const [saves, setSaves] = useState<Record<string, SimSettings>>(loadSaves);
+  const [saveName, setSaveName] = useState("");
+
+  function doSaveNamed() {
+    const name = saveName.trim();
+    if (!name) return;
+    const existed = name in saves;
+    setSaves(putSave(name, currentSettings));
+    setSaveName("");
+    setShareMsg(existed ? `Updated "${name}".` : `Saved "${name}".`);
+  }
+  function doLoadNamed(name: string) {
+    const s = saves[name];
+    if (!s) return;
+    applySettings(s);
+    setShareMsg(`Loaded "${name}".`);
+  }
+  function doDeleteNamed(name: string) {
+    setSaves(deleteSave(name));
+    setShareMsg(`Deleted "${name}".`);
+  }
+
+  function applySettings(s: SimSettings) {
+    setItemClass(s.classKey); // engine binds to this class
+    setClassKey(s.classKey);
+    setBaseName(s.baseName);
+    setIlvl(s.ilvl);
+    setStartRarity(s.startRarity);
+    setStartMods(s.startMods);
+    setScript(s.script);
+    setTarget(s.target);
+    setSeed(s.seed);
+    setBatchRuns(s.batchRuns);
+    setStopMode(s.stopMode);
+    setStopValue(s.stopValue);
+    setBaseAmountState(s.baseAmount);
+    setBaseUnitState(s.baseUnit);
+    try {
+      localStorage.setItem(BASE_AMOUNT_KEY, String(s.baseAmount));
+      localStorage.setItem(BASE_UNIT_KEY, s.baseUnit);
+    } catch {
+      /* ignore */
+    }
+    setResult(null);
+    setBatch(null);
+    setComparison(null);
+    setError(null);
+  }
+
+  function doImport() {
+    try {
+      applySettings(decodeSettings(importText));
+      setImportText("");
+      setShareMsg("Loaded settings.");
+    } catch (e) {
+      setShareMsg("Invalid code: " + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async function copyShareCode() {
+    try {
+      await navigator.clipboard.writeText(shareCode);
+      setShareMsg("Copied to clipboard.");
+    } catch {
+      setShareMsg("Copy failed — select the text manually.");
+    }
   }
 
   function compile() {
@@ -247,6 +396,7 @@ export default function App() {
   function doRun(useRandomSeed = false) {
     if (busy) return;
     setBatch(null);
+    setComparison(null);
     const runSeed = useRandomSeed ? Math.floor(Math.random() * 1e9) : seed;
     if (useRandomSeed) setSeed(runSeed);
     // parse synchronously so syntax errors surface immediately (no spinner)
@@ -260,7 +410,7 @@ export default function App() {
     }
     deferred(() => {
       try {
-        const item = newItem(base, ilvl);
+        const item = makeStart(runSeed).item;
         setResult(run(program, item, new RNG(runSeed), { collectLog: true, ...limitOpts() }));
       } catch (e) {
         setResult(null);
@@ -283,19 +433,32 @@ export default function App() {
     setProgress(0);
     setBusy(true);
     setSimulating(true);
+    const opts = { ...limitOpts(), startItem: makeStart(seed).item };
+    const control = { cancelled: () => cancelRef.current, onProgress: setProgress };
+    const hasCompare = extractComparisons(compiled.program).length > 0;
     try {
-      const res = await runBatchAsync(
-        compiled.program,
-        base,
-        ilvl,
-        batchRuns,
-        seed,
-        { target: compiled.targetCond, ...limitOpts() },
-        { cancelled: () => cancelRef.current, onProgress: setProgress }
-      );
-      if (res) setBatch(res); // null => cancelled, keep previous
+      if (hasCompare) {
+        // each `compare` block produces a side-by-side group of option results
+        const groups = await runComparisonsAsync(
+          compiled.program, base, ilvl, batchRuns, seed, opts, control
+        );
+        if (groups) {
+          setComparison(groups);
+          setBatch(null);
+        }
+      } else {
+        const res = await runBatchAsync(
+          compiled.program, base, ilvl, batchRuns, seed,
+          { target: compiled.targetCond, ...opts }, control
+        );
+        if (res) {
+          setBatch(res); // null => cancelled, keep previous
+          setComparison(null);
+        }
+      }
     } catch (e) {
       setBatch(null);
+      setComparison(null);
       setError(String(e instanceof Error ? e.message : e));
     } finally {
       setBusy(false);
@@ -317,6 +480,103 @@ export default function App() {
             poe2db
           </a>
         </span>
+      </div>
+
+      <div className="panel">
+        <h2>Save / Load Sim</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          A save captures the full setup (class, base, item level, starting item,
+          script, target, seed, runs, stop limit, base price). Saved sims are stored
+          in this browser.
+        </p>
+        <input
+          type="text"
+          value={saveName}
+          placeholder="name this sim…"
+          onChange={(e) => setSaveName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && doSaveNamed()}
+          style={{ width: "100%", maxWidth: 320 }}
+        />
+        <div className="row" style={{ marginTop: 6 }}>
+          <button onClick={doSaveNamed} disabled={!saveName.trim()}>
+            {saveName.trim() && saveName.trim() in saves ? "Update" : "Save"}
+          </button>
+        </div>
+        {Object.keys(saves).length === 0 ? (
+          <div className="muted" style={{ marginTop: 4 }}>
+            No saved sims yet.
+          </div>
+        ) : (
+          <table className="saves" style={{ marginTop: 6, maxWidth: 420, width: "100%" }}>
+            <tbody>
+              {Object.keys(saves)
+                .sort((a, b) => a.localeCompare(b))
+                .map((name) => (
+                  <tr key={name}>
+                    <td style={{ width: "100%", wordBreak: "break-word" }}>{name}</td>
+                    <td>
+                      <button
+                        className="secondary"
+                        style={{ padding: "4px 10px" }}
+                        onClick={() => doLoadNamed(name)}
+                      >
+                        Load
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        className="secondary"
+                        style={{ padding: "4px 10px" }}
+                        title={`Delete "${name}"`}
+                        onClick={() => doDeleteNamed(name)}
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        )}
+
+        <details style={{ marginTop: 10 }}>
+          <summary>Share / import as a code</summary>
+          <label style={{ marginTop: 8 }}>
+            Sim code
+            <textarea
+              readOnly
+              value={shareCode}
+              spellCheck={false}
+              onFocus={(e) => e.currentTarget.select()}
+              style={{ minHeight: 56, fontSize: 11 }}
+            />
+          </label>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="secondary" onClick={copyShareCode}>
+              Copy code
+            </button>
+          </div>
+          <label style={{ marginTop: 8 }}>
+            Load a sim code
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              spellCheck={false}
+              placeholder="paste a sim code here"
+              style={{ minHeight: 56, fontSize: 11 }}
+            />
+          </label>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button onClick={doImport} disabled={!importText.trim()}>
+              Load
+            </button>
+          </div>
+        </details>
+        {shareMsg && (
+          <div className="muted" style={{ marginTop: 8 }}>
+            {shareMsg}
+          </div>
+        )}
       </div>
 
       <div className="grid">
@@ -377,12 +637,53 @@ export default function App() {
                 </span>
               </label>
             </div>
+            <div className="row">
+              <label>
+                Starting rarity
+                <select
+                  value={startRarity}
+                  onChange={(e) => setStartRarity(e.target.value as Rarity)}
+                >
+                  <option value="Normal">Normal (blank)</option>
+                  <option value="Magic">Magic</option>
+                  <option value="Rare">Rare</option>
+                </select>
+              </label>
+              <label style={{ flex: 1, minWidth: 220 }}>
+                Starting modifiers (one per line, e.g. <code>Movement Speed</code>,{" "}
+                <code>All Attributes t2</code>, or <code>fractured Movement Speed</code>)
+                <textarea
+                  value={startMods}
+                  onChange={(e) => setStartMods(e.target.value)}
+                  spellCheck={false}
+                  disabled={startRarity === "Normal"}
+                  style={{ minHeight: 60, opacity: startRarity === "Normal" ? 0.5 : 1 }}
+                  placeholder={startRarity === "Normal" ? "(choose Magic or Rare to add mods)" : ""}
+                />
+              </label>
+            </div>
+            {startBuild.errors.length > 0 && (
+              <div className="error">{startBuild.errors.join("\n")}</div>
+            )}
           </div>
 
           <div className="panel">
             <h2>Crafting Script</h2>
             <textarea value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} />
-            <div className="row" style={{ marginTop: 10 }}>
+          </div>
+
+          <div className="panel">
+            <h2>Run</h2>
+            <div className="row">
+              <label style={{ flex: 1, minWidth: 220 }}>
+                Target condition (success metric)
+                <input
+                  type="text"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  spellCheck={false}
+                />
+              </label>
               <label>
                 Stop after
                 <select
@@ -408,53 +709,24 @@ export default function App() {
               )}
             </div>
             <div className="row" style={{ marginTop: 4 }}>
-              <label>
-                Seed
-                <input
-                  type="number"
-                  value={seed}
-                  style={{ width: 110 }}
-                  onChange={(e) => setSeed(Number(e.target.value))}
-                />
-              </label>
-            </div>
-            <div className="row">
               <button onClick={() => doRun(false)} disabled={busy}>
                 {busy && !simulating && <span className="spinner" />}
-                Run
+                Run with seed
               </button>
+              <input
+                type="number"
+                value={seed}
+                title="Seed"
+                style={{ width: 110 }}
+                onChange={(e) => setSeed(Number(e.target.value))}
+              />
+            </div>
+            <div className="row">
               <button className="secondary" onClick={() => doRun(true)} disabled={busy}>
                 Run with random seed
               </button>
             </div>
-            {error && <div className="error">{error}</div>}
-          </div>
-
-          <div className="panel">
-            <h2>Monte Carlo</h2>
             <div className="row">
-              <label style={{ flex: 1 }}>
-                Target condition (success metric)
-                <input
-                  type="text"
-                  value={target}
-                  onChange={(e) => setTarget(e.target.value)}
-                  spellCheck={false}
-                />
-              </label>
-            </div>
-            <div className="row">
-              <label>
-                Runs
-                <input
-                  type="number"
-                  value={batchRuns}
-                  min={1}
-                  max={200000}
-                  style={{ width: 90 }}
-                  onChange={(e) => setBatchRuns(Number(e.target.value))}
-                />
-              </label>
               {simulating ? (
                 <>
                   <button disabled>
@@ -470,6 +742,15 @@ export default function App() {
                   Simulate {batchRuns}×
                 </button>
               )}
+              <input
+                type="number"
+                value={batchRuns}
+                min={1}
+                max={200000}
+                title="Number of runs"
+                style={{ width: 90 }}
+                onChange={(e) => setBatchRuns(Number(e.target.value))}
+              />
             </div>
             {simulating && (
               <>
@@ -482,15 +763,13 @@ export default function App() {
                 </div>
               </>
             )}
-            {batch && <BatchView batch={batch} prices={prices} basePrice={basePrice} />}
+            {error && <div className="error">{error}</div>}
           </div>
 
-        </div>
-
-        <div>
           <div className="panel">
-            <h2>Result Item</h2>
-            <ItemCard item={result ? result.item : newItem(base, ilvl)} />
+            <h2>Results</h2>
+            <div className="muted" style={{ marginBottom: 6 }}>Result item</div>
+            <ItemCard item={result ? result.item : startBuild.item} />
             {result && (
               <div style={{ marginTop: 10 }}>
                 {result.budgetExceeded && (
@@ -513,30 +792,46 @@ export default function App() {
                 />
               </div>
             )}
+
+            {batch && (
+              <div style={{ marginTop: 14 }}>
+                <div className="muted" style={{ marginBottom: 6 }}>Monte Carlo</div>
+                <BatchView batch={batch} prices={prices} basePrice={basePrice} />
+              </div>
+            )}
+            {comparison && (
+              <div style={{ marginTop: 14 }}>
+                <div className="muted" style={{ marginBottom: 6 }}>Approach comparison</div>
+                <ComparisonView groups={comparison} prices={prices} basePrice={basePrice} />
+              </div>
+            )}
+
+            {result && (
+              <details style={{ marginTop: 14 }}>
+                <summary>Step log ({result.totalSpent})</summary>
+                <div className="log" style={{ marginTop: 6 }}>
+                  {result.log.slice(0, LOG_RENDER_LIMIT).map((e, i) => (
+                    <div key={i} className={`entry ${e.applied ? "" : "fail"}`}>
+                      <span className="ln">{e.line}</span>
+                      <span className="cur">{e.currency}</span> — {e.note}
+                      <span className="muted"> ({e.affixCount} affixes)</span>
+                    </div>
+                  ))}
+                  {result.log.length > LOG_RENDER_LIMIT && (
+                    <div className="muted">
+                      …showing first {LOG_RENDER_LIMIT.toLocaleString()} of{" "}
+                      {result.totalSpent.toLocaleString()} steps
+                    </div>
+                  )}
+                  {result.log.length === 0 && <div className="muted">no operations ran</div>}
+                </div>
+              </details>
+            )}
           </div>
 
-          {result && (
-            <div className="panel">
-              <h2>Step Log ({result.totalSpent})</h2>
-              <div className="log">
-                {result.log.slice(0, LOG_RENDER_LIMIT).map((e, i) => (
-                  <div key={i} className={`entry ${e.applied ? "" : "fail"}`}>
-                    <span className="ln">{e.line}</span>
-                    <span className="cur">{e.currency}</span> — {e.note}
-                    <span className="muted"> ({e.affixCount} affixes)</span>
-                  </div>
-                ))}
-                {result.log.length > LOG_RENDER_LIMIT && (
-                  <div className="muted">
-                    …showing first {LOG_RENDER_LIMIT.toLocaleString()} of{" "}
-                    {result.totalSpent.toLocaleString()} steps
-                  </div>
-                )}
-                {result.log.length === 0 && <div className="muted">no operations ran</div>}
-              </div>
-            </div>
-          )}
+        </div>
 
+        <div>
           <PricePanel prices={prices} onChange={updatePrice} onReset={resetPrices} />
           <AffixPanel ilvl={ilvl} />
           <OmenPanel />
@@ -566,7 +861,7 @@ function SpentView({
       <tbody>
         {entries.map(([k, v]) => (
           <tr key={k}>
-            <td>{CURRENCY[k]?.label ?? k}</td>
+            <td>{CURRENCY[k]?.label ?? OMENS[k]?.label ?? k}</td>
             <td>{v}</td>
             <td className="muted">{formatCost(v * (prices[k] ?? 0), prices)}</td>
           </tr>
@@ -594,25 +889,188 @@ function SpentView({
   );
 }
 
+function ComparisonView({
+  groups,
+  prices,
+  basePrice,
+}: {
+  groups: ComparisonGroup[];
+  prices: Record<string, number>;
+  basePrice: number;
+}) {
+  type Opt = ComparisonGroup["options"][number];
+  // each row: a labelled metric, how to read it, and which direction is better
+  const rows: {
+    label: string;
+    value: (o: Opt) => number;
+    fmt: (o: Opt) => string;
+    better: "high" | "low";
+  }[] = [
+    {
+      label: "Success",
+      value: (o) => o.result.successRate,
+      fmt: (o) => `${(o.result.successRate * 100).toFixed(1)}%`,
+      better: "high",
+    },
+    {
+      label: "Avg cost",
+      value: (o) => o.result.cost.avg + basePrice,
+      fmt: (o) => unitCost(o.result.cost.avg + basePrice, prices),
+      better: "low",
+    },
+    {
+      label: "p95 cost",
+      value: (o) => o.result.cost.p95 + basePrice,
+      fmt: (o) => unitCost(o.result.cost.p95 + basePrice, prices),
+      better: "low",
+    },
+    {
+      label: "Cost / success",
+      value: (o) =>
+        o.result.successRate > 0
+          ? (o.result.cost.avg + basePrice) / o.result.successRate
+          : Infinity,
+      fmt: (o) =>
+        o.result.successRate > 0
+          ? unitCost((o.result.cost.avg + basePrice) / o.result.successRate, prices)
+          : "—",
+      better: "low",
+    },
+    {
+      label: "Avg attempts",
+      value: (o) => o.result.totalCount.avg,
+      fmt: (o) => fmtCount(o.result.totalCount.avg),
+      better: "low",
+    },
+  ];
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      {groups.map((g, gi) => {
+        // overall best: lowest cost per success (no successes => worst)
+        const costPerSuccess = (o: ComparisonGroup["options"][number]) =>
+          o.result.successRate > 0
+            ? (o.result.cost.avg + basePrice) / o.result.successRate
+            : Infinity;
+        let bestIdx = 0;
+        g.options.forEach((o, i) => {
+          if (costPerSuccess(o) < costPerSuccess(g.options[bestIdx])) bestIdx = i;
+        });
+        // best option index per row (for highlighting)
+        const bestForRow = rows.map((r) => {
+          let bi = 0;
+          g.options.forEach((o, i) => {
+            const cmp = r.better === "high" ? r.value(o) > r.value(g.options[bi]) : r.value(o) < r.value(g.options[bi]);
+            if (cmp) bi = i;
+          });
+          return bi;
+        });
+        return (
+          <div key={gi} style={{ marginBottom: 20 }}>
+            <div className="muted" style={{ marginBottom: 6 }}>
+              Comparing approaches for <code>{g.condText}</code> ({g.options[0].result.runs}×)
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table className="metrics" style={{ minWidth: "min-content" }}>
+                <tbody>
+                  <tr className="mc-head">
+                    <td style={{ minWidth: 90 }} />
+                    {g.options.map((o, oi) => (
+                      <td
+                        key={oi}
+                        style={{ textAlign: "right", color: "var(--accent)", minWidth: 90 }}
+                      >
+                        {oi === bestIdx ? "★ " : ""}
+                        {o.name}
+                      </td>
+                    ))}
+                  </tr>
+                  {rows.map((r, ri) => (
+                    <tr className="mc-row" key={ri}>
+                      <td className="muted">{r.label}</td>
+                      {g.options.map((o, oi) => (
+                        <td
+                          key={oi}
+                          className={oi === bestForRow[ri] ? "good" : ""}
+                          style={{ textAlign: "right" }}
+                        >
+                          {r.fmt(o)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                // each card keeps a readable minimum; if the container is too
+                // narrow to fit them, the row scrolls horizontally instead of
+                // squashing the cards (and their tables) too small to read
+                gridTemplateColumns: `repeat(${g.options.length}, minmax(340px, 1fr))`,
+                gap: 14,
+                marginTop: 12,
+                alignItems: "flex-start",
+                overflowX: "auto",
+              }}
+            >
+              {g.options.map((o, oi) => (
+                <div
+                  key={oi}
+                  style={{
+                    border: `1px solid ${oi === bestIdx ? "var(--accent)" : "var(--border)"}`,
+                    borderRadius: 8,
+                    padding: 10,
+                  }}
+                >
+                  <div style={{ color: "var(--accent)", fontWeight: 600, marginBottom: 6 }}>
+                    {oi === bestIdx ? "★ " : ""}
+                    {o.name}
+                  </div>
+                  <BatchView batch={o.result} prices={prices} basePrice={basePrice} compact />
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BatchView({
   batch,
   prices,
   basePrice,
+  compact = false,
 }: {
   batch: BatchResult;
   prices: Record<string, number>;
   basePrice: number;
+  compact?: boolean;
 }) {
   const entries = Object.entries(batch.avgSpent).sort((a, b) => b[1] - a[1]);
-  const metrics = ["avg", "min", "p95", "max"] as const;
-  // two right-aligned cells per metric: count, then cost
+  // compact mode (used in side-by-side comparison cards) shows only the Avg column
+  const metrics = (compact ? ["avg"] : ["avg", "min", "p95", "max"]) as readonly (
+    | "avg"
+    | "min"
+    | "p95"
+    | "max"
+  )[];
+  const fullSpan = metrics.length * 2;
+  // two right-aligned cells per metric: cost (value), then the count in parens
   const divider = { borderLeft: "1px solid var(--border)", paddingLeft: 8 } as const;
   const cells = (count: number, ex: number, cls: string, key: string) => [
-    <td key={key + "n"} className={cls} style={{ textAlign: "right", paddingRight: 3, ...divider }}>
-      {fmtCount(count)}×
-    </td>,
-    <td key={key + "c"} className={cls} style={{ textAlign: "right", paddingRight: 10 }}>
+    <td key={key + "c"} className={cls} style={{ textAlign: "right", paddingRight: 4, ...divider }}>
       {unitCost(ex, prices)}
+    </td>,
+    <td
+      key={key + "n"}
+      className={cls}
+      style={{ textAlign: "right", paddingRight: 10, color: "var(--muted)" }}
+    >
+      ({fmtCount(count)}×)
     </td>,
   ];
   // a row where cost = count × price (a single currency or the base item)
@@ -630,18 +1088,18 @@ function BatchView({
         <tbody>
           <tr>
             <td>Runs</td>
-            <td colSpan={8}>{batch.runs}</td>
+            <td colSpan={fullSpan}>{batch.runs}</td>
           </tr>
           <tr>
-            <td className="good">Success rate (target met)</td>
-            <td className="good" colSpan={8}>
+            <td className="good">{compact ? "Success" : "Success rate (target met)"}</td>
+            <td className="good" colSpan={fullSpan}>
               {(batch.successRate * 100).toFixed(1)}%
             </td>
           </tr>
           {batch.budgetExceededRate > 0 && (
             <tr>
               <td className="bad">Hit op budget</td>
-              <td className="bad" colSpan={8}>
+              <td className="bad" colSpan={fullSpan}>
                 {(batch.budgetExceededRate * 100).toFixed(1)}%
               </td>
             </tr>
@@ -649,7 +1107,7 @@ function BatchView({
           {batch.limitReachedRate > 0 && (
             <tr>
               <td>Hit stop limit</td>
-              <td colSpan={8}>{(batch.limitReachedRate * 100).toFixed(1)}%</td>
+              <td colSpan={fullSpan}>{(batch.limitReachedRate * 100).toFixed(1)}%</td>
             </tr>
           )}
           <tr className="muted mc-head">
@@ -665,7 +1123,7 @@ function BatchView({
             ))}
           </tr>
           {entries.map(([k]) =>
-            currencyRow(CURRENCY[k]?.label ?? k, batch.perCurrency[k] ?? flat(0), prices[k] ?? 0)
+            currencyRow(CURRENCY[k]?.label ?? OMENS[k]?.label ?? k, batch.perCurrency[k] ?? flat(0), prices[k] ?? 0)
           )}
           {basePrice > 0 && currencyRow("Base item", flat(1), basePrice, "muted")}
           {/* Total: count from totalCount, cost from cost (+ base) — not a single price */}
@@ -684,7 +1142,7 @@ function BatchView({
                 "good",
                 "ps"
               )}
-              <td colSpan={6} style={divider}></td>
+              {fullSpan > 2 && <td colSpan={fullSpan - 2} style={divider}></td>}
             </tr>
           )}
         </tbody>
@@ -924,7 +1382,7 @@ function OmenPanel() {
                 <td style={{ color: "var(--accent)" }}>{o.label}</td>
                 <td>
                   <code>
-                    {o.currency} with "{o.key}"
+                    {(Array.isArray(o.currency) ? o.currency.join("/") : o.currency)} with "{o.key}"
                   </code>
                 </td>
                 <td className="muted">{o.desc}</td>
@@ -994,6 +1452,20 @@ function HelpPanel() {
           <code>annul with "whittling"</code> (remove the lowest mod). See the Omens panel.
         </p>
         <p>
+          <b>Catalysts</b> (rings &amp; amulets only): <code>catalyst "attribute"</code> adds
+          quality (5% per use, caps at 20%) that boosts the values of modifiers carrying that
+          tag. Types: attribute, resistance, elemental, physical, caster, attack, life, mana,
+          defence, critical, chaos, speed. Using a different type retypes the quality.{" "}
+          <code>catalyst "resistance" with "catalysing"</code> applies the full 20% at once.
+        </p>
+        <p>
+          <b>Reveal pick:</b> add <code>pick &lt;cond&gt;</code> to a <code>reveal</code> to
+          choose the offered desecration option matching a condition instead of taking one
+          at random — e.g. <code>reveal pick has "movement speed"</code> or{" "}
+          <code>reveal pick has prefix "evasion" tier &lt;= 2</code>. If no offered option
+          matches, it falls back to a random pick.
+        </p>
+        <p>
           <b>Control flow:</b>
         </p>
         <table>
@@ -1027,6 +1499,19 @@ function HelpPanel() {
                 <code>stop</code>
               </td>
               <td>end the script immediately</td>
+            </tr>
+            <tr>
+              <td>
+                <code>
+                  compare &lt;cond&gt; {"{"} option "a" {"{ }"} option "b" {"{ }"} {"}"}
+                </code>
+              </td>
+              <td>
+                Monte-Carlo only: runs a separate simulation for each labelled{" "}
+                <code>option</code> toward the shared success condition and shows them side by
+                side (★ marks the highest success rate). Shared steps outside the block apply
+                to every option. A single Run uses the first option.
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1065,10 +1550,21 @@ function HelpPanel() {
             </tr>
             <tr>
               <td>
+                <code>has 2 suffix "resistance" tier == 1</code>,{" "}
+                <code>has &gt;= 2 prefix</code>
+              </td>
+              <td>
+                count <em>matching</em> affixes — a leading number (or{" "}
+                <code>&lt;op&gt; N</code>) requires that many matches (bare number = at
+                least N)
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <code>prefixes &gt;= N</code>, <code>suffixes &lt; N</code>,{" "}
                 <code>affixes == N</code>
               </td>
-              <td>count comparisons</td>
+              <td>count comparisons (all affixes in a slot)</td>
             </tr>
             <tr>
               <td>

@@ -1,5 +1,5 @@
-import type { AffixType, BowBase, Item, ModDef, RolledMod } from "./types";
-import { ALL_MODS, DESECRATED_MODS, ESSENCES, rollMod, divineMod } from "./mods";
+import type { AffixType, BowBase, Item, ModDef, RolledMod, Rarity } from "./types";
+import { ALL_MODS, DESECRATED_MODS, ESSENCES, rollMod, divineMod, resolveStartMod, activeClass } from "./mods";
 import { RNG } from "./rng";
 
 export const MAX_AFFIX: Record<string, number> = {
@@ -19,6 +19,50 @@ export function newItem(base: BowBase, ilvl: number): Item {
     suffixes: [],
     unrevealed: 0,
   };
+}
+
+/**
+ * Build a starting item at a given rarity with a set of pre-applied modifiers.
+ * Each spec is an affix name (optionally with a `tN` tier — see resolveStartMod),
+ * and may be prefixed with `fractured` to lock that modifier (e.g.
+ * `fractured Movement Speed t1`). Returns the item plus any errors (unknown names,
+ * duplicate groups, full slots, or mods on a Normal item) so the UI can surface
+ * them. Mods are rolled with the provided RNG so the start is reproducible by seed.
+ */
+export function buildStartItem(
+  base: BowBase,
+  ilvl: number,
+  rarity: Rarity,
+  specs: string[],
+  rng: RNG
+): { item: Item; errors: string[] } {
+  const item = newItem(base, ilvl);
+  item.rarity = rarity;
+  const errors: string[] = [];
+  const wanted = specs.map((s) => s.trim()).filter(Boolean);
+  if (rarity === "Normal" && wanted.length > 0) {
+    errors.push("a Normal item can't have modifiers — choose Magic or Rare");
+    return { item, errors };
+  }
+  for (const raw of wanted) {
+    // optional leading `fractured` keyword locks the modifier
+    const fractured = /^fractured\s+/i.test(raw);
+    const spec = raw.replace(/^fractured\s+/i, "");
+    const def = resolveStartMod(spec, ilvl);
+    if (!def) {
+      errors.push(`unknown modifier: "${spec}"`);
+      continue;
+    }
+    if (usedGroups(item).has(def.group)) {
+      errors.push(`"${spec}" duplicates another starting modifier's group`);
+      continue;
+    }
+    if (!addSpecificMod(item, def, rng, { fractured })) {
+      const slot = def.type === "Prefix" ? "prefix" : "suffix";
+      errors.push(`no room for "${spec}" (too many ${slot}es for ${rarity})`);
+    }
+  }
+  return { item, errors };
 }
 
 export function cloneItem(it: Item): Item {
@@ -141,6 +185,16 @@ export function removeRandomAffix(
   return { kind: "unrevealed" };
 }
 
+/** Remove a random desecrated modifier (Omen of Light). Fractured never removed. */
+export function removeRandomDesecrated(it: Item, rng: RNG): RolledMod | null {
+  const removable = allMods(it).filter((m) => m.desecrated && !m.fractured);
+  if (removable.length === 0) return null;
+  const target = removable[rng.int(0, removable.length - 1)];
+  const pi = it.prefixes.indexOf(target);
+  if (pi >= 0) return it.prefixes.splice(pi, 1)[0];
+  return it.suffixes.splice(it.suffixes.indexOf(target), 1)[0];
+}
+
 /** Remove a random NON-fractured mod of a specific slot type. */
 export function removeRandomModOfType(it: Item, slot: AffixType, rng: RNG): RolledMod | null {
   const arr = slot === "Prefix" ? it.prefixes : it.suffixes;
@@ -219,7 +273,7 @@ export function addHomogenising(it: Item, rng: RNG, minLvl = 0): boolean {
 export interface Omen {
   key: string; // canonical, lowercase, no "omen of"
   label: string;
-  currency: string; // base currency it modifies: exalt|chaos|annul|regal
+  currency: string | string[]; // base currency(ies) it modifies: exalt|chaos|annul|regal
   desc: string;
 }
 
@@ -232,7 +286,8 @@ export const OMENS: Record<string, Omen> = {
   "dextral erasure": { key: "dextral erasure", label: "Omen of Dextral Erasure", currency: "chaos", desc: "Chaos Orb removes a suffix" },
   "sinistral annulment": { key: "sinistral annulment", label: "Omen of Sinistral Annulment", currency: "annul", desc: "Annulment removes a prefix" },
   "dextral annulment": { key: "dextral annulment", label: "Omen of Dextral Annulment", currency: "annul", desc: "Annulment removes a suffix" },
-  whittling: { key: "whittling", label: "Omen of Whittling", currency: "annul", desc: "Annulment removes the lowest-level modifier" },
+  whittling: { key: "whittling", label: "Omen of Whittling", currency: ["annul", "chaos"], desc: "Annulment/Chaos removes the lowest-level modifier" },
+  light: { key: "light", label: "Omen of Light", currency: "annul", desc: "Annulment removes only a desecrated modifier" },
   "sinistral coronation": { key: "sinistral coronation", label: "Omen of Sinistral Coronation", currency: "regal", desc: "Regal Orb adds a prefix" },
   "dextral coronation": { key: "dextral coronation", label: "Omen of Dextral Coronation", currency: "regal", desc: "Regal Orb adds a suffix" },
   "sinistral crystallisation": { key: "sinistral crystallisation", label: "Omen of Sinistral Crystallisation", currency: "essence", desc: "Perfect Essence removes a prefix" },
@@ -240,7 +295,37 @@ export const OMENS: Record<string, Omen> = {
   "sinistral necromancy": { key: "sinistral necromancy", label: "Omen of Sinistral Necromancy", currency: "reveal", desc: "Revealed desecrated modifier is a prefix" },
   "dextral necromancy": { key: "dextral necromancy", label: "Omen of Dextral Necromancy", currency: "reveal", desc: "Revealed desecrated modifier is a suffix" },
   "abyssal echoes": { key: "abyssal echoes", label: "Omen of Abyssal Echoes", currency: "reveal", desc: "Reveal offers additional modifier options" },
+  catalysing: { key: "catalysing", label: "Omen of Catalysing", currency: "catalyst", desc: "Catalyst applies the maximum quality at once" },
 };
+
+// ---- catalysts (jewellery quality that boosts a modifier type) ----
+const CATALYST_STEP = 5; // quality added per catalyst use
+const CATALYST_MAX = 20; // quality cap on jewellery
+
+export const CATALYSTS: Record<string, { label: string; tag: string }> = {
+  attribute: { label: "Attribute Catalyst", tag: "attribute" },
+  resistance: { label: "Resistance Catalyst", tag: "resistance" },
+  elemental: { label: "Elemental Catalyst", tag: "elemental_damage" },
+  physical: { label: "Physical Catalyst", tag: "physical" },
+  caster: { label: "Caster Catalyst", tag: "caster" },
+  attack: { label: "Attack Catalyst", tag: "attack" },
+  life: { label: "Life Catalyst", tag: "life" },
+  mana: { label: "Mana Catalyst", tag: "mana" },
+  defence: { label: "Defence Catalyst", tag: "defences" },
+  critical: { label: "Critical Catalyst", tag: "critical" },
+  chaos: { label: "Chaos Catalyst", tag: "chaos" },
+  speed: { label: "Speed Catalyst", tag: "speed" },
+};
+
+/** Resolve a catalyst arg (dsl key, tag, or substring) to its definition. */
+export function resolveCatalyst(raw: string): { key: string; label: string; tag: string } | null {
+  const s = raw.trim().toLowerCase();
+  if (!s) return null;
+  for (const [key, v] of Object.entries(CATALYSTS)) {
+    if (key === s || v.tag === s || key.includes(s)) return { key, ...v };
+  }
+  return null;
+}
 
 const REVEAL_OPTIONS = 3;
 const REVEAL_OPTIONS_ECHOES = 6;
@@ -260,7 +345,9 @@ export function resolveOmen(currencyBase: string, raw: string): Omen | null {
     .filter(Boolean);
   if (terms.length === 0) return null;
   const matches = Object.values(OMENS).filter(
-    (o) => o.currency === currencyBase && terms.every((t) => o.key.includes(t))
+    (o) =>
+      (Array.isArray(o.currency) ? o.currency.includes(currencyBase) : o.currency === currencyBase) &&
+      terms.every((t) => o.key.includes(t))
   );
   return matches[0] ?? null;
 }
@@ -278,7 +365,13 @@ export const CURRENCY: Record<
     label: string;
     desc: string;
     takesArg?: boolean;
-    apply: (it: Item, rng: RNG, arg?: string, omens?: Omen[]) => CurrencyResult;
+    apply: (
+      it: Item,
+      rng: RNG,
+      arg?: string,
+      omens?: Omen[],
+      chooser?: (options: ModDef[], it: Item) => number,
+    ) => CurrencyResult;
   }
 > = {
   alchemy: {
@@ -300,6 +393,10 @@ export const CURRENCY: Record<
       if (it.corrupted) return fail("item is corrupted");
       const e = omenEffects(omens);
       if ("error" in e) return fail(e.error);
+      if (e.onlyDesecrated) {
+        const r = removeRandomDesecrated(it, rng);
+        return r ? ok(`removed desecrated "${r.def.affix}"`) : fail("no desecrated modifier to remove");
+      }
       if (e.lowest) {
         const r = removeLowestMod(it, rng, e.removeSlot);
         return r
@@ -381,52 +478,100 @@ export const CURRENCY: Record<
   },
   desecrate: {
     label: "Bone (Desecration)",
-    desc: "Add an unrevealed desecrated affix to a Rare item with an open affix",
-    apply(it) {
+    desc:
+      'Add an unrevealed desecrated affix (Rare, open affix). The bone tier sets the ' +
+      'min mod level of the reveal: desecrate "preserved" (any), desecrate "ancient" (≥40).',
+    takesArg: true,
+    apply(it, _rng, arg) {
       if (it.corrupted) return fail("item is corrupted");
       if (it.rarity !== "Rare") return fail("requires a Rare item");
       if (totalAffixes(it) >= affixCap(it)) return fail("no open affix");
+      const tier = (arg ?? "").trim().toLowerCase();
+      it.boneMinLevel = tier.includes("ancient") ? 40 : 0; // ancient cuts low tiers
       it.unrevealed += 1;
-      return ok("added an unrevealed desecrated affix");
+      return ok(`added an unrevealed desecrated affix${tier ? ` (${tier})` : ""}`);
     },
   },
   reveal: {
     label: "Reveal Desecrated (Well of Souls)",
-    desc: "Reveal an unrevealed desecrated affix, choosing one of up to 3 options",
-    apply(it, rng, _arg, omens = []) {
+    desc: "Reveal an unrevealed affix, choosing one of up to 3 options (a mix of regular and Abyssal mods)",
+    apply(it, rng, _arg, omens = [], chooser) {
       if (it.corrupted) return fail("item is corrupted");
       if (it.unrevealed <= 0) return fail("no unrevealed desecrated affix");
       const e = omenEffects(omens);
       if ("error" in e) return fail(e.error);
-      // candidates: desecrated mods whose group is free and whose slot has room
-      // (the unrevealed affix being consumed frees a generic slot). A Necromancy
-      // omen restricts the revealed mod to a prefix/suffix.
+      // candidates: the desecrated (Abyssal) pool *plus* the regular mod pool —
+      // the Well of Souls offers a mix of normal and desecrated-only modifiers.
+      // Each candidate's group must be free and its slot must have room (the
+      // unrevealed affix being consumed frees a generic slot). Regular mods are
+      // item-level gated; desecrated mods are not. A Necromancy omen restricts
+      // the revealed mod to a prefix/suffix.
       const used = usedGroups(it);
-      const candidates = DESECRATED_MODS.filter((m) => {
-        if (used.has(m.group)) return false;
-        if (e.addSlot && m.type !== e.addSlot) return false;
-        return m.type === "Prefix"
+      const slotHasRoom = (m: ModDef) =>
+        m.type === "Prefix"
           ? it.prefixes.length < MAX_AFFIX[it.rarity]
           : it.suffixes.length < MAX_AFFIX[it.rarity];
-      });
+      const eligible = (m: ModDef) => {
+        if (used.has(m.group)) return false;
+        if (e.addSlot && m.type !== e.addSlot) return false;
+        return slotHasRoom(m);
+      };
+      // bone tier sets a minimum mod level (Ancient = 40), stripping low tiers
+      const minLvl = it.boneMinLevel ?? 0;
+      const candidates = [
+        ...DESECRATED_MODS.filter((m) => m.level >= minLvl && eligible(m)),
+        ...ALL_MODS.filter((m) => m.weight > 0 && m.level >= minLvl && m.level <= it.ilvl && eligible(m)),
+      ];
       if (candidates.length === 0) {
         it.unrevealed -= 1;
-        return ok("revealed — no eligible desecrated mod, affix lost");
+        return ok("revealed — no eligible mod, affix lost");
       }
-      // draw up to N distinct options by weight, then pick one at random
-      // (Omen of Abyssal Echoes offers more options to choose from).
+      // draw up to N distinct options by weight, then pick one (Omen of Abyssal
+      // Echoes offers more options). Abyssal mods carry a typical mod weight, so
+      // they compete on equal footing with regular mods in this single pool.
       const maxOptions = e.echoes ? REVEAL_OPTIONS_ECHOES : REVEAL_OPTIONS;
       const pool = [...candidates];
-      const options: typeof candidates = [];
+      const options: ModDef[] = [];
       for (let i = 0; i < maxOptions && pool.length > 0; i++) {
         const idx = rng.weighted(pool.map((m) => m.weight));
         if (idx < 0) break;
         options.push(pool.splice(idx, 1)[0]);
       }
-      const chosen = options[rng.int(0, options.length - 1)];
+      const picked = chooser ? chooser(options, it) : -1;
+      const chosen =
+        picked >= 0 && picked < options.length
+          ? options[picked]
+          : options[rng.int(0, options.length - 1)];
       it.unrevealed -= 1;
-      addSpecificMod(it, chosen, rng, { desecrated: true });
+      // only the Abyssal pool counts as a "desecrated" mod; a revealed regular
+      // mod is just a normal modifier.
+      const isDesecrated = DESECRATED_MODS.includes(chosen);
+      addSpecificMod(it, chosen, rng, { desecrated: isDesecrated });
       return ok(`revealed "${chosen.affix}" (from ${options.length} option${options.length > 1 ? "s" : ""})`);
+    },
+  },
+  catalyst: {
+    label: "Catalyst",
+    desc:
+      'Add quality to a ring/amulet, boosting modifiers of a type. Caps at 20%; ' +
+      'a new type retypes existing quality. Usage: catalyst "attribute"',
+    takesArg: true,
+    apply(it, _rng, arg, omens = []) {
+      if (it.corrupted) return fail("item is corrupted");
+      if (activeClass.kind !== "jewellery")
+        return fail("catalysts only apply to rings and amulets");
+      if (!arg) return fail('catalyst needs a type, e.g. catalyst "attribute"');
+      const cat = resolveCatalyst(arg);
+      if (!cat) return fail(`unknown catalyst "${arg}"`);
+      const e = omenEffects(omens);
+      if ("error" in e) return fail(e.error);
+      const before = it.quality;
+      const sameType = it.qualityTag === cat.tag;
+      it.qualityTag = cat.tag;
+      it.quality = e.catalysing ? CATALYST_MAX : Math.min(CATALYST_MAX, it.quality + CATALYST_STEP);
+      if (sameType && it.quality === before)
+        return ok(`already at maximum ${cat.tag} quality (${it.quality}%)`);
+      return ok(`${cat.label}: quality ${it.quality}% boosting ${cat.tag} mods`);
     },
   },
   essence: {
@@ -534,10 +679,12 @@ interface OmenEffects {
   homogenising: boolean; // added mods must share a tag with an existing one
   lowest: boolean; // removal targets the lowest-level mod
   echoes: boolean; // reveal offers extra options (Abyssal Echoes)
+  catalysing: boolean; // catalyst applies maximum quality at once
+  onlyDesecrated: boolean; // annulment removes only a desecrated mod (Omen of Light)
 }
 
 function omenEffects(omens: Omen[]): OmenEffects | { error: string } {
-  const e: OmenEffects = { count: 1, homogenising: false, lowest: false, echoes: false };
+  const e: OmenEffects = { count: 1, homogenising: false, lowest: false, echoes: false, catalysing: false, onlyDesecrated: false };
   for (const o of omens) {
     switch (o.key) {
       case "greater exaltation":
@@ -573,8 +720,14 @@ function omenEffects(omens: Omen[]): OmenEffects | { error: string } {
       case "whittling":
         e.lowest = true;
         break;
+      case "light":
+        e.onlyDesecrated = true;
+        break;
       case "abyssal echoes":
         e.echoes = true;
+        break;
+      case "catalysing":
+        e.catalysing = true;
         break;
     }
   }
@@ -640,7 +793,11 @@ function applyChaos(it: Item, rng: RNG, minLvl: number, omens: Omen[] = []): Cur
   const e = omenEffects(omens);
   if ("error" in e) return fail(e.error);
   let removedNote: string;
-  if (e.removeSlot) {
+  if (e.lowest) {
+    const r = removeLowestMod(it, rng, e.removeSlot);
+    if (!r) return fail("no mods to remove");
+    removedNote = `lowest ${e.removeSlot ? e.removeSlot.toLowerCase() + " " : ""}"${r.def.affix}" (i${r.def.level})`;
+  } else if (e.removeSlot) {
     const r = removeRandomModOfType(it, e.removeSlot, rng);
     if (!r) return fail(`no ${e.removeSlot.toLowerCase()} to remove`);
     removedNote = `${e.removeSlot.toLowerCase()} "${r.def.affix}"`;

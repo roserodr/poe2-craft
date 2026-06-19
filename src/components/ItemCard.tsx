@@ -1,9 +1,9 @@
 import type { Item, RolledMod } from "../engine/types";
 import { renderMod, modTier } from "../engine/mods";
 
-function ModLines({ mod }: { mod: RolledMod }) {
+function ModLines({ mod, scale = 1 }: { mod: RolledMod; scale?: number }) {
   const { tier, count } = modTier(mod.def);
-  const lines = renderMod(mod);
+  const lines = renderMod(mod, scale);
   const cls = mod.fractured
     ? "mod fractured"
     : mod.desecrated
@@ -38,10 +38,16 @@ function ModLines({ mod }: { mod: RolledMod }) {
 export function ItemCard({ item }: { item: Item }) {
   const b = item.base;
   const isWeapon = b.aps !== undefined;
+  const isArmour =
+    !isWeapon && ((b.armour ?? 0) + (b.evasion ?? 0) + (b.energyShield ?? 0)) > 0;
+  const isJewellery = !isWeapon && !isArmour;
   const qMult = 1 + item.quality / 100;
 
   let stats: string;
-  if (isWeapon) {
+  if (isJewellery) {
+    // no offensive/defensive base stats — the implicit carries the value
+    stats = "";
+  } else if (isWeapon) {
     let incPhys = 0;
     for (const m of [...item.prefixes, ...item.suffixes]) {
       if (m.def.group === "LocalPhysicalDamagePercent") incPhys += m.values[0] || 0;
@@ -76,8 +82,15 @@ export function ItemCard({ item }: { item: Item }) {
     stats = parts.join(" · ");
   }
 
+  // catalyst quality boosts the values of jewellery mods carrying the quality tag
+  const modScale = (m: RolledMod): number =>
+    isJewellery && item.quality > 0 && item.qualityTag && m.def.tags?.includes(item.qualityTag)
+      ? 1 + item.quality / 100
+      : 1;
+
   const rar = item.rarity.toLowerCase();
-  const kind = isWeapon ? "Bow" : "Boots";
+  // jewellery has no fixed slot noun; use the base's last word (e.g. "Ring", "Amulet")
+  const kind = isWeapon ? "Bow" : isJewellery ? b.name.split(" ").pop() || "Item" : "Boots";
   const title =
     item.rarity === "Rare"
       ? `Crafted ${kind}`
@@ -92,9 +105,14 @@ export function ItemCard({ item }: { item: Item }) {
         <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.name}</div>
       </div>
       <div className="props">
-        {stats}
-        <br />
-        Quality {item.quality}% · iLvl {item.ilvl}
+        {stats && (
+          <>
+            {stats}
+            <br />
+          </>
+        )}
+        Quality {item.quality}%
+        {item.qualityTag && item.quality > 0 ? ` (${item.qualityTag})` : ""} · iLvl {item.ilvl}
       </div>
       {b.implicit && <div className="implicit">{b.implicit}</div>}
       <div className="mods">
@@ -102,10 +120,10 @@ export function ItemCard({ item }: { item: Item }) {
           <div className="muted">no modifiers</div>
         )}
         {item.prefixes.map((m, i) => (
-          <ModLines key={"p" + i} mod={m} />
+          <ModLines key={"p" + i} mod={m} scale={modScale(m)} />
         ))}
         {item.suffixes.map((m, i) => (
-          <ModLines key={"s" + i} mod={m} />
+          <ModLines key={"s" + i} mod={m} scale={modScale(m)} />
         ))}
         {Array.from({ length: item.unrevealed }).map((_, i) => (
           <div key={"u" + i} className="mod desecrated">

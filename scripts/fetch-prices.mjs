@@ -39,6 +39,17 @@ const API_MAP = {
   // representative single picks (these mechanics span many tiers/bones):
   essence: { id: "essence-of-abrasion", category: "essences" }, // bow phys essence
   desecrate: { id: "amanamus-gaze", category: "abyss" }, // cheapest boss bone
+  // Omens (in poe2scout's "ritual" category, ApiId = omen-of-<key with '-'>).
+  // Keyed by our OMENS keys (item.ts). Untracked ones fall back to ESTIMATES.
+  "sinistral erasure": { id: "omen-of-sinistral-erasure", category: "ritual" },
+  "dextral erasure": { id: "omen-of-dextral-erasure", category: "ritual" },
+  "sinistral annulment": { id: "omen-of-sinistral-annulment", category: "ritual" },
+  "dextral annulment": { id: "omen-of-dextral-annulment", category: "ritual" },
+  whittling: { id: "omen-of-whittling", category: "ritual" },
+  light: { id: "omen-of-light", category: "ritual" },
+  "abyssal echoes": { id: "omen-of-abyssal-echoes", category: "ritual" },
+  "dextral crystallisation": { id: "omen-of-dextral-crystallisation", category: "ritual" },
+  "sinistral crystallisation": { id: "omen-of-sinistral-crystallisation", category: "ritual" },
 };
 
 // Currencies poe2scout doesn't track individually (near-vendor cheap).
@@ -53,6 +64,16 @@ const ESTIMATES = {
   // Greater low-orbs aren't individually tracked on poe2scout:
   greaterTransmute: 2,
   greaterAugment: 2,
+  // Omens poe2scout doesn't list (exalt/regal/reveal-slot omens). Rough estimates.
+  "sinistral exaltation": 150,
+  "dextral exaltation": 150,
+  "greater exaltation": 40,
+  "homogenising exaltation": 80,
+  "sinistral coronation": 30,
+  "dextral coronation": 30,
+  "sinistral necromancy": 25,
+  "dextral necromancy": 25,
+  catalysing: 25,
 };
 
 function get(url) {

@@ -1,6 +1,7 @@
 import type { Stmt, Cond } from "./ast";
+import { condToString } from "./ast";
 import type { BowBase, Item } from "../engine/types";
-import { newItem } from "../engine/item";
+import { newItem, cloneItem } from "../engine/item";
 import { RNG } from "../engine/rng";
 import { run, evalCond, type RunOptions } from "./interpreter";
 
@@ -35,6 +36,8 @@ export interface BatchOptions {
   maxSteps?: number;
   maxCost?: number;
   prices?: Record<string, number>;
+  /** template starting item; cloned for each attempt. Defaults to a fresh base. */
+  startItem?: Item;
 }
 
 interface Acc {
@@ -73,10 +76,11 @@ function step(
   seed: number,
   i: number,
   runOpts: RunOptions,
-  target?: Cond
+  target?: Cond,
+  startItem?: Item
 ) {
   const rng = new RNG(seed + i * 2654435761);
-  const item = newItem(base, ilvl);
+  const item = startItem ? cloneItem(startItem) : newItem(base, ilvl);
   const res = run(program, item, rng, runOpts);
   for (const [k, v] of Object.entries(res.spent)) {
     acc.totals[k] = (acc.totals[k] || 0) + v;
@@ -181,7 +185,8 @@ export function runBatch(
 ): BatchResult {
   const acc = newAcc(seed);
   const runOpts = runOptionsFrom(opts);
-  for (let i = 0; i < runs; i++) step(acc, program, base, ilvl, seed, i, runOpts, opts.target);
+  for (let i = 0; i < runs; i++)
+    step(acc, program, base, ilvl, seed, i, runOpts, opts.target, opts.startItem);
   return finalize(acc, runs, !!opts.target);
 }
 
@@ -213,7 +218,7 @@ export async function runBatchAsync(
   let last = now();
 
   for (let i = 0; i < runs; i++) {
-    step(acc, program, base, ilvl, seed, i, runOpts, opts.target);
+    step(acc, program, base, ilvl, seed, i, runOpts, opts.target, opts.startItem);
     const boundary = (i + 1) % chunk === 0 || now() - last >= SLICE_MS;
     if (boundary && i + 1 < runs) {
       if (control.cancelled?.()) return null;
@@ -229,4 +234,83 @@ export async function runBatchAsync(
 
 function now(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+// ---- comparison (`compare` blocks): run one batch per option arm ----
+
+/** Build the runnable program for one option: keep all non-compare statements,
+ * splice in this option's body for the target compare block, and drop other
+ * compare blocks (each comparison is evaluated independently). */
+function flattenForOption(program: Stmt[], target: Stmt, body: Stmt[]): Stmt[] {
+  const out: Stmt[] = [];
+  for (const s of program) {
+    if (s.kind === "compare") {
+      if (s === target) out.push(...body);
+    } else {
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+export interface ComparisonOptionResult {
+  name: string;
+  result: BatchResult;
+}
+export interface ComparisonGroup {
+  condText: string; // the shared success condition, rendered
+  line: number;
+  options: ComparisonOptionResult[];
+}
+
+/** Each top-level `compare` block becomes a group of option programs to batch. */
+export function extractComparisons(
+  program: Stmt[]
+): { cond: Cond; condText: string; line: number; options: { name: string; program: Stmt[] }[] }[] {
+  const groups = [];
+  for (const s of program) {
+    if (s.kind === "compare") {
+      groups.push({
+        cond: s.cond,
+        condText: condToString(s.cond),
+        line: s.line,
+        options: s.options.map((o) => ({ name: o.name, program: flattenForOption(program, s, o.body) })),
+      });
+    }
+  }
+  return groups;
+}
+
+/** Run a Monte Carlo batch for every option of every compare block, sharing one
+ * progress/cancel control. Each option uses its compare block's condition as the
+ * success target. Resolves to null if cancelled. */
+export async function runComparisonsAsync(
+  program: Stmt[],
+  base: BowBase,
+  ilvl: number,
+  runs: number,
+  seed: number,
+  opts: BatchOptions = {},
+  control: BatchControl = {}
+): Promise<ComparisonGroup[] | null> {
+  const groups = extractComparisons(program);
+  const total = groups.reduce((n, g) => n + g.options.length, 0);
+  let done = 0;
+  const out: ComparisonGroup[] = [];
+  for (const g of groups) {
+    const options: ComparisonOptionResult[] = [];
+    for (const opt of g.options) {
+      const result = await runBatchAsync(opt.program, base, ilvl, runs, seed, { ...opts, target: g.cond }, {
+        cancelled: control.cancelled,
+        chunkSize: control.chunkSize,
+        onProgress: (f) => control.onProgress?.((done + f) / total),
+      });
+      if (!result) return null; // cancelled
+      options.push({ name: opt.name, result });
+      done++;
+      control.onProgress?.(done / total);
+    }
+    out.push({ condText: g.condText, line: g.line, options });
+  }
+  return out;
 }

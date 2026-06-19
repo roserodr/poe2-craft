@@ -1,4 +1,4 @@
-import { CURRENCY } from "./item";
+import { CURRENCY, OMENS } from "./item";
 import priceData from "../data/prices.json";
 
 /** Costs are expressed in Exalted Orbs. Default values are fetched live from
@@ -10,10 +10,11 @@ export const PRICE_SOURCE = priceData.source;
 
 export const DEFAULT_PRICES: Record<string, number> = priceData.prices;
 
-/** Always return a full price map, filling any missing currency with 0. */
+/** Always return a full price map (every currency + omen), filling missing with 0. */
 export function fullPrices(prices: Record<string, number>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const key of Object.keys(CURRENCY)) out[key] = prices[key] ?? 0;
+  for (const key of Object.keys(OMENS)) out[key] = prices[key] ?? 0;
   return out;
 }
 

@@ -1,5 +1,5 @@
 import { tokenize, type Token } from "./lexer";
-import { CURRENCY_NAMES, type Cond, type CmpOp, type Stmt } from "./ast";
+import { CURRENCY_NAMES, type Cond, type CmpOp, type Stmt, type CompareOption } from "./ast";
 import { baseCurrency, resolveOmen } from "../engine/item";
 
 export class ParseError extends Error {
@@ -104,6 +104,24 @@ class Parser {
       }
       return { kind: "if", cond, then, else: elseBody, line };
     }
+    if (w === "compare") {
+      this.next();
+      const cond = this.parseCond();
+      this.expect("lbrace");
+      const options: CompareOption[] = [];
+      while (this.at("word", "option")) {
+        const optLine = this.peek().line;
+        this.next(); // 'option'
+        const name = this.expect("string").value;
+        const body = this.parseBlock();
+        options.push({ name, body, line: optLine });
+      }
+      if (options.length < 2) {
+        throw new ParseError("a compare block needs at least two `option` arms", line);
+      }
+      this.expect("rbrace");
+      return { kind: "compare", cond, options, line };
+    }
     if (w === "stop") {
       this.next();
       return { kind: "stop", line };
@@ -123,7 +141,8 @@ class Parser {
       this.next();
       this.eatWord("orb");
       const omens = this.parseOmens(key, line);
-      return { kind: "currency", name: key, omens, line };
+      const pick = this.parsePick(key, line);
+      return { kind: "currency", name: key, omens, pick, line };
     }
 
     // otherwise: a currency command
@@ -135,7 +154,8 @@ class Parser {
       // allow an optional "orb" word for readability: `chaos orb`
       this.eatWord("orb");
       const omens = this.parseOmens(w, line);
-      return { kind: "currency", name: w, arg, omens, line };
+      const pick = this.parsePick(w, line);
+      return { kind: "currency", name: w, arg, omens, pick, line };
     }
     throw new ParseError(`unknown command '${w}'`, line);
   }
@@ -156,6 +176,15 @@ class Parser {
       while (this.eatWord("and")) readOne();
     }
     return keys.length ? keys : undefined;
+  }
+
+  /** Parse optional `pick <cond>` clause (only valid on `reveal`). */
+  private parsePick(currencyKey: string, line: number): Cond | undefined {
+    if (!this.eatWord("pick")) return undefined;
+    if (baseCurrency(currencyKey) !== "reveal") {
+      throw new ParseError(`'pick' only applies to 'reveal', not '${currencyKey}'`, line);
+    }
+    return this.parseCond();
   }
 
   // ---- conditions (precedence: or < and < not < primary) ----
@@ -200,6 +229,13 @@ class Parser {
 
     if (w === "has") {
       this.next();
+      // optional count qualifier: `has 2 ...` (>= 2) or `has >= 2 ...` / `has == 2 ...`
+      let count: { op: CmpOp; value: number } | undefined;
+      if (this.at("op") || this.at("number")) {
+        const op = this.at("op") ? this.parseCmp() : ">=";
+        const n = this.expect("number");
+        count = { op, value: parseFloat(n.value) };
+      }
       let slot: "prefix" | "suffix" | "any" = "any";
       if (this.eatWord("prefix")) slot = "prefix";
       else if (this.eatWord("suffix")) slot = "suffix";
@@ -217,13 +253,14 @@ class Parser {
         tier = { op, value: parseFloat(n.value) };
       }
       const fractured = this.eatWord("fractured") || undefined;
-      if (!text && !group && !tier && !fractured) {
+      const hasMatcher = text || group || tier || fractured || slot !== "any";
+      if (!hasMatcher) {
         throw new ParseError(
-          '`has` needs a "text", `group "..."`, a tier comparison, or `fractured`',
+          '`has` needs a slot, "text", `group "..."`, a tier comparison, or `fractured`',
           line
         );
       }
-      return { kind: "has", slot, text, group, tier, fractured };
+      return { kind: "has", slot, text, group, tier, fractured, count };
     }
     if (w === "open") {
       this.next();

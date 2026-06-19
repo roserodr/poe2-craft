@@ -1,7 +1,8 @@
 import type { Cond, CmpOp, Stmt } from "./ast";
 import type { Item } from "../engine/types";
-import { CURRENCY, totalAffixes, MAX_AFFIX, OMENS } from "../engine/item";
-import { renderModInline, modTier, groupLabel, AFFIX_NAMES } from "../engine/mods";
+import { CURRENCY, totalAffixes, MAX_AFFIX, OMENS, cloneItem, addSpecificMod } from "../engine/item";
+import type { ModDef } from "../engine/types";
+import { renderModInline, modTier, groupLabel, AFFIX_NAMES, DESECRATED_MODS } from "../engine/mods";
 import { RNG } from "../engine/rng";
 
 export class RuntimeError extends Error {
@@ -53,16 +54,18 @@ function matchesGroup(m: { def: { group: string } }, name: string): boolean {
   return m.def.group.toLowerCase() === name || groupLabel(m.def.group).toLowerCase() === name;
 }
 
-function modMatches(
+/** Count the affixes on `item` that match the slot/text/group/tier/fractured filter. */
+function countMatches(
   item: Item,
   slot: "prefix" | "suffix" | "any",
   text: string,
   group?: string,
   tier?: { op: CmpOp; value: number },
   fractured?: boolean
-): boolean {
+): number {
   const pools =
     slot === "prefix" ? [item.prefixes] : slot === "suffix" ? [item.suffixes] : [item.prefixes, item.suffixes];
+  let n = 0;
   for (const pool of pools) {
     for (const m of pool) {
       if (fractured && !m.fractured) continue;
@@ -78,10 +81,10 @@ function modMatches(
         }
       }
       if (tier && !cmp(tier.op, modTier(m.def).tier, tier.value)) continue;
-      return true;
+      n++;
     }
   }
-  return false;
+  return n;
 }
 
 function cmp(op: CmpOp, a: number, b: number): boolean {
@@ -103,8 +106,10 @@ function cmp(op: CmpOp, a: number, b: number): boolean {
 
 export function evalCond(c: Cond, item: Item): boolean {
   switch (c.kind) {
-    case "has":
-      return modMatches(item, c.slot, c.text, c.group, c.tier, c.fractured);
+    case "has": {
+      const n = countMatches(item, c.slot, c.text, c.group, c.tier, c.fractured);
+      return c.count ? cmp(c.count.op, n, c.count.value) : n >= 1;
+    }
     case "count": {
       const n =
         c.what === "prefixes"
@@ -156,6 +161,9 @@ class Interp {
   maxSteps: number;
   maxCost: number;
   prices: Record<string, number>;
+  // dedicated RNG for simulating reveal options during `pick` evaluation; kept
+  // separate so the main craft RNG stream stays deterministic.
+  private scratch = new RNG(0x9e3779b9);
 
   constructor(public item: Item, public rng: RNG, public budget: number, opts: RunOptions) {
     this.collectLog = opts.collectLog ?? true;
@@ -171,10 +179,11 @@ class Interp {
     }
   }
 
-  /** Record a currency op and stop if a user-configured step/cost limit is hit. */
-  private accountAndCheckLimit(name: string) {
+  /** Record a currency op (plus any omens) and stop if a step/cost limit is hit. */
+  private accountAndCheckLimit(name: string, omens?: string[]) {
     this.steps++;
     this.cost += this.prices[name] ?? 0;
+    for (const o of omens ?? []) this.cost += this.prices[o] ?? 0;
     if (
       (this.maxSteps > 0 && this.steps >= this.maxSteps) ||
       (this.maxCost > 0 && this.cost >= this.maxCost)
@@ -193,13 +202,32 @@ class Interp {
       case "currency": {
         this.tick();
         const def = CURRENCY[s.name];
+        const pick = s.pick;
+        const chooser = pick
+          ? (options: ModDef[], it: Item): number => {
+              for (let i = 0; i < options.length; i++) {
+                const clone = cloneItem(it);
+                // reveal consumes the unrevealed slot, freeing room for the mod
+                clone.unrevealed = Math.max(0, clone.unrevealed - 1);
+                // mirror reveal's flagging: only Abyssal mods are "desecrated"
+                const desecrated = DESECRATED_MODS.includes(options[i]);
+                if (addSpecificMod(clone, options[i], this.scratch, { desecrated }) && evalCond(pick, clone)) {
+                  return i;
+                }
+              }
+              return -1;
+            }
+          : undefined;
         const res = def.apply(
           this.item,
           this.rng,
           s.arg,
-          s.omens?.map((k) => OMENS[k])
+          s.omens?.map((k) => OMENS[k]),
+          chooser
         );
         this.spent[s.name] = (this.spent[s.name] || 0) + 1;
+        // omens are consumed per use too — track + price them separately
+        for (const o of s.omens ?? []) this.spent[o] = (this.spent[o] || 0) + 1;
         // Cap the log so a runaway loop can't build a giant array (and freeze
         // the UI when rendered). totalSpent still reflects the true count.
         if (this.collectLog && this.log.length < MAX_LOG) {
@@ -211,7 +239,7 @@ class Interp {
             affixCount: totalAffixes(this.item),
           });
         }
-        this.accountAndCheckLimit(s.name);
+        this.accountAndCheckLimit(s.name, s.omens);
         break;
       }
       case "repeat": {
@@ -238,6 +266,12 @@ class Interp {
       case "if": {
         if (evalCond(s.cond, this.item)) this.runBlock(s.then);
         else this.runBlock(s.else);
+        break;
+      }
+      case "compare": {
+        // A comparison is a Monte-Carlo-only construct; a single run just takes
+        // the first option's body as the default path so the script still runs.
+        if (s.options.length > 0) this.runBlock(s.options[0].body);
         break;
       }
       case "stop":

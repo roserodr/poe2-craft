@@ -6,9 +6,16 @@
     "boss": "Ulaman",
     "group": "DesUlamanFarDamage",
     "level": 65,
-    "weight": 100,
-    "lines": ["Projectiles deal (60-79)% increased Damage with Hits against Enemies further than 6m"],
-    "tags": ["projectile", "damage", "attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "Projectiles deal (60-79)% increased Damage with Hits against Enemies further than 6m"
+    ],
+    "tags": [
+      "projectile",
+      "damage",
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -18,9 +25,15 @@
     "boss": "Ulaman",
     "group": "DesUlamanExtraProj",
     "level": 65,
-    "weight": 100,
-    "lines": ["Projectile Attacks have a (10-18)% chance to fire two additional Projectiles while moving"],
-    "tags": ["projectile", "attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "Projectile Attacks have a (10-18)% chance to fire two additional Projectiles while moving"
+    ],
+    "tags": [
+      "projectile",
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -30,9 +43,15 @@
     "boss": "Ulaman",
     "group": "LocalIncreasedAttackSpeed",
     "level": 65,
-    "weight": 100,
-    "lines": ["(8-13)% increased Attack Speed"],
-    "tags": ["speed", "attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(8-13)% increased Attack Speed"
+    ],
+    "tags": [
+      "speed",
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -42,9 +61,15 @@
     "boss": "Amanamu",
     "group": "DesAmanamuCompanionDmg",
     "level": 65,
-    "weight": 100,
-    "lines": ["Companions deal (40-59)% increased Damage"],
-    "tags": ["minion", "damage", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "Companions deal (40-59)% increased Damage"
+    ],
+    "tags": [
+      "minion",
+      "damage",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -54,9 +79,14 @@
     "boss": "Amanamu",
     "group": "DesAmanamuAoE",
     "level": 65,
-    "weight": 100,
-    "lines": ["(12-23)% increased Area of Effect for Attacks"],
-    "tags": ["attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(12-23)% increased Area of Effect for Attacks"
+    ],
+    "tags": [
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -66,9 +96,15 @@
     "boss": "Amanamu",
     "group": "LocalIncreasedAttackSpeed",
     "level": 65,
-    "weight": 100,
-    "lines": ["(12-18)% increased Attack Speed"],
-    "tags": ["speed", "attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(12-18)% increased Attack Speed"
+    ],
+    "tags": [
+      "speed",
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -78,9 +114,15 @@
     "boss": "Amanamu",
     "group": "DesAmanamuPierce",
     "level": 65,
-    "weight": 100,
-    "lines": ["(40-60)% chance to Pierce an Enemy"],
-    "tags": ["projectile", "attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(40-60)% chance to Pierce an Enemy"
+    ],
+    "tags": [
+      "projectile",
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -90,9 +132,15 @@
     "boss": "Kurgal",
     "group": "DesKurgalChain",
     "level": 65,
-    "weight": 100,
-    "lines": ["Projectiles have (25-35)% chance to Chain an additional time from terrain"],
-    "tags": ["projectile", "attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "Projectiles have (25-35)% chance to Chain an additional time from terrain"
+    ],
+    "tags": [
+      "projectile",
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -102,9 +150,13 @@
     "boss": "Kurgal",
     "group": "DesKurgalQuiver",
     "level": 65,
-    "weight": 100,
-    "lines": ["(30-40)% increased bonuses gained from Equipped Quiver"],
-    "tags": ["desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(30-40)% increased bonuses gained from Equipped Quiver"
+    ],
+    "tags": [
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -114,9 +166,15 @@
     "boss": "Kurgal",
     "group": "DesKurgalFarCrit",
     "level": 65,
-    "weight": 100,
-    "lines": ["Projectiles have (25-34)% increased Critical Hit Chance against Enemies further than 6m"],
-    "tags": ["projectile", "critical", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "Projectiles have (25-34)% increased Critical Hit Chance against Enemies further than 6m"
+    ],
+    "tags": [
+      "projectile",
+      "critical",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -126,9 +184,14 @@
     "boss": "Kurgal",
     "group": "DesKurgalImmobilise",
     "level": 65,
-    "weight": 100,
-    "lines": ["(25-34)% increased Immobilisation buildup"],
-    "tags": ["attack", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(25-34)% increased Immobilisation buildup"
+    ],
+    "tags": [
+      "attack",
+      "desecrated"
+    ],
     "desecrated": true
   }
 ]

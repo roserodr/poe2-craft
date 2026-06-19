@@ -60,9 +60,13 @@ export interface Item {
   rarity: Rarity;
   ilvl: number;
   quality: number;
+  /** tag whose modifiers the (catalyst) quality boosts, for jewellery */
+  qualityTag?: string;
   corrupted: boolean;
   prefixes: RolledMod[];
   suffixes: RolledMod[];
   /** count of unrevealed desecrated affixes (added by a Bone, not yet revealed) */
   unrevealed: number;
+  /** min mod level for the next reveal, set by the Bone tier (Ancient = 40) */
+  boneMinLevel?: number;
 }

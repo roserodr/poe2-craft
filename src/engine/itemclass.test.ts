@@ -5,6 +5,7 @@ import {
   ALL_BASES,
   ALL_MODS,
   ESSENCES,
+  resolveStartMod,
 } from "./mods";
 import { newItem, CURRENCY, totalAffixes, usedGroups } from "./item";
 import { RNG } from "./rng";
@@ -13,9 +14,50 @@ import { RNG } from "./rng";
 afterAll(() => setItemClass("bow"));
 
 describe("multi-class support", () => {
-  it("registers bow and dex/int boots", () => {
+  it("registers bow, dex/int boots, amulet and ring", () => {
     expect(ITEM_CLASSES.map((c) => c.key)).toContain("bow");
     expect(ITEM_CLASSES.map((c) => c.key)).toContain("dexIntBoots");
+    expect(ITEM_CLASSES.map((c) => c.key)).toContain("amulet");
+    expect(ITEM_CLASSES.map((c) => c.key)).toContain("ring");
+  });
+
+  it('resolves boots "Movement Speed" by stat text (group is MovementVelocity)', () => {
+    setItemClass("dexIntBoots");
+    const def = resolveStartMod("Movement Speed", 82);
+    expect(def).not.toBeNull();
+    expect(def!.group).toBe("MovementVelocity");
+    // the tier suffix still works
+    expect(resolveStartMod("Movement Speed t1", 82)).not.toBeNull();
+  });
+
+  it("switches the active dataset to ring (jewellery) with real weights", () => {
+    setItemClass("ring");
+    expect(ALL_BASES.length).toBeGreaterThan(0);
+    for (const b of ALL_BASES) {
+      expect(b.aps).toBeUndefined();
+      expect((b.armour ?? 0) + (b.evasion ?? 0) + (b.energyShield ?? 0)).toBe(0);
+    }
+    // bow/boots families are gone; real scraped weights present
+    expect(ALL_MODS.some((m) => m.group === "LocalPhysicalDamage")).toBe(false);
+    expect(Math.max(...ALL_MODS.map((m) => m.weight))).toBeGreaterThan(1);
+    expect(ESSENCES.length).toBeGreaterThan(0);
+  });
+
+  it("switches the active dataset to amulet (jewellery)", () => {
+    setItemClass("amulet");
+    expect(ALL_BASES.length).toBeGreaterThan(0);
+    // amulets are jewellery: no weapon or armour base stats, but have implicits
+    for (const b of ALL_BASES) {
+      expect(b.aps).toBeUndefined();
+      expect((b.armour ?? 0) + (b.evasion ?? 0) + (b.energyShield ?? 0)).toBe(0);
+    }
+    // amulet-only mod families are present; bow/boots families are gone
+    expect(ALL_MODS.some((m) => m.group === "BaseSpirit")).toBe(true);
+    expect(ALL_MODS.some((m) => m.group === "LocalPhysicalDamage")).toBe(false);
+    expect(ALL_MODS.some((m) => m.group === "MovementVelocity")).toBe(false);
+    // real scraped weights (not the uniform placeholder)
+    expect(Math.max(...ALL_MODS.map((m) => m.weight))).toBeGreaterThan(1);
+    expect(ESSENCES.length).toBeGreaterThan(0);
   });
 
   it("switches the active dataset to dex/int boots", () => {

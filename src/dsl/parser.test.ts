@@ -79,10 +79,48 @@ describe("parser: statements", () => {
     });
   });
 
+  it("parses a reveal with a pick condition", () => {
+    expect(parse('reveal pick has "movement speed"')[0]).toMatchObject({
+      name: "reveal",
+      pick: { kind: "has", slot: "any", text: "movement speed" },
+    });
+    // composes with an omen
+    expect(parse('reveal with "dextral necromancy" pick has prefix "evasion" tier <= 2')[0]).toMatchObject({
+      name: "reveal",
+      omens: ["dextral necromancy"],
+      pick: { kind: "has", slot: "prefix", text: "evasion", tier: { op: "<=", value: 2 } },
+    });
+  });
+
+  it("rejects 'pick' on a non-reveal currency", () => {
+    expect(() => parse('chaos pick has "x"')).toThrow(ParseError);
+  });
+
   it("rejects an omen that doesn't apply to the currency", () => {
     expect(() => parse('chaos with "sinistral exaltation"')).toThrow(ParseError);
     expect(() => parse('exalt with "nonsense"')).toThrow(ParseError);
     expect(() => parse('reveal with "sinistral exaltation"')).toThrow(ParseError);
+  });
+
+  it("parses a compare block with labelled options", () => {
+    const prog = parse(`
+      compare has prefix "physical damage" {
+        option "g exalt" { greater exalt }
+        option "p exalt" { perfect exalt }
+      }
+    `);
+    expect(prog).toHaveLength(1);
+    const s = prog[0];
+    expect(s.kind).toBe("compare");
+    if (s.kind !== "compare") throw new Error("not compare");
+    expect(s.cond).toMatchObject({ kind: "has", slot: "prefix", text: "physical damage" });
+    expect(s.options.map((o) => o.name)).toEqual(["g exalt", "p exalt"]);
+    expect(s.options[0].body[0]).toMatchObject({ kind: "currency", name: "greaterExalt" });
+    expect(s.options[1].body[0]).toMatchObject({ kind: "currency", name: "perfectExalt" });
+  });
+
+  it("rejects a compare block with fewer than two options", () => {
+    expect(() => parse('compare full { option "only" { exalt } }')).toThrow(ParseError);
   });
 
   it("parses repeat / while / until / if-else / stop", () => {
@@ -154,6 +192,22 @@ describe("parseCondition", () => {
     });
   });
 
+  it("parses a has condition with a count qualifier", () => {
+    // bare number defaults to >=
+    expect(parseCondition('has 2 suffix "resistance" tier == 1')).toMatchObject({
+      kind: "has",
+      slot: "suffix",
+      text: "resistance",
+      tier: { op: "==", value: 1 },
+      count: { op: ">=", value: 2 },
+    });
+    // explicit operator
+    expect(parseCondition("has == 2 suffix tier <= 1")).toMatchObject({
+      slot: "suffix",
+      count: { op: "==", value: 2 },
+    });
+  });
+
   it("parses a has condition with an exact affix group", () => {
     expect(parseCondition('has prefix group "Accuracy Rating"')).toEqual({
       kind: "has",
@@ -174,8 +228,13 @@ describe("parseCondition", () => {
     });
   });
 
-  it("rejects a has condition with neither text nor tier", () => {
-    expect(() => parseCondition("has prefix")).toThrow(ParseError);
+  it("rejects a bare `has` with no slot/matcher", () => {
+    expect(() => parseCondition("has")).toThrow(ParseError);
+  });
+
+  it("accepts a slot-only `has` (existence of that slot)", () => {
+    // `has prefix` means "at least one prefix"; useful with a count, e.g. `has 2 prefix`
+    expect(parseCondition("has prefix")).toMatchObject({ kind: "has", slot: "prefix", text: "" });
   });
 
   it("parses a has condition with a fractured filter", () => {

@@ -100,10 +100,23 @@ omens can be combined** with `and` or another `with` — e.g.
   (essence) modifier — a second essence is rejected.
 - **`fracture`** (Fracturing Orb) — on a Rare with 4+ mods, locks one *random*
   modifier. Fractured mods survive `chaos`, `annul`, and can't be `scour`ed.
+- **`catalyst "<type>"`** (rings & amulets only) — adds quality (5% per use, caps
+  at 20%) that boosts the values of modifiers carrying that tag. Types: `attribute`,
+  `resistance`, `elemental`, `physical`, `caster`, `attack`, `life`, `mana`,
+  `defence`, `critical`, `chaos`, `speed`. Using a different type retypes the
+  quality. `catalyst "x" with "catalysing"` (Omen of Catalysing) applies the full
+  20% in one use.
 - **`desecrate`** (a Bone) — on a Rare with an open affix, adds a blank
   **unrevealed** desecrated affix (occupies a slot but isn't a concrete mod yet).
 - **`reveal`** (Well of Souls) — resolves one unrevealed affix, choosing one of
-  up to 3 random options from the desecrated pool.
+  up to 3 random options drawn from a **single weighted pool of regular + Abyssal
+  mods** — Abyssal mods carry a typical mod weight (1000), so they compete on
+  equal footing per mod (only Abyssal mods are flagged `desecrated`). Add **`pick <cond>`** to choose
+  the offered option matching a condition instead of picking at random — e.g.
+  `reveal pick has "movement speed"` or
+  `reveal with "abyssal echoes" pick has prefix "evasion" tier <= 2`. If none of
+  the offered options match, it falls back to a random pick. `pick` is only valid
+  on `reveal`.
 - **Fracture interaction:** a Fracturing Orb can't target an unrevealed
   desecrated affix — it only fractures the other (concrete) affixes. So with 3
   real mods + 1 unrevealed (4 total), fracture always lands on one of the 3.
@@ -119,6 +132,12 @@ whether such an affix is present.
 - `repeat N { ... }`
 - `if <cond> { ... } else { ... }`
 - `stop`
+- `compare <cond> { option "a" { ... } option "b" { ... } }` — compare different
+  approaches toward the same success condition. In **Monte Carlo**, each `option`
+  is simulated separately and shown side by side (success rate, avg/p95 cost, cost
+  per success, avg attempts; ★ marks the best). Statements outside the block are
+  shared by every option, and other `compare` blocks are evaluated independently.
+  A single **Run** just executes the first option.
 
 **Conditions:** `has prefix "text"`, `has suffix "text"`, `has "text"`
 (case-insensitive substring over affix name / mod group / rolled text). Add an
@@ -139,6 +158,35 @@ combined with `not` / `and` / `or` / `( )`.
 Comments start with `#` or `//`.
 
 An operation budget guards against `while` loops that can never terminate.
+
+### Starting item
+
+By default a run begins from a blank **Normal** base. In *Base & Setup* you can
+instead set a **Starting rarity** (Magic or Rare) and list **Starting modifiers**
+(one per line) to begin mid-craft from an item you already have. Each line is an
+affix name — the same names shown in the *Affix Pool* / used by `has` (e.g.
+`Movement Speed`, `All Attributes`) — with an optional trailing tier like
+`All Attributes t2` (`t1` = best; otherwise the best tier ≤ item level is used).
+Prefix a line with `fractured` to start with that modifier locked (e.g.
+`fractured Movement Speed`). Mods are rolled (reproducibly by seed) and validated: unknown names, duplicate
+groups, or too many affixes for the rarity are reported. The same starting item
+is used for the single run and is cloned for every Monte Carlo attempt.
+
+### Save / Load a sim
+
+A sim captures the entire setup — item class, base, item level, starting item
+(rarity + mods), script, target, seed, run count, stop limit, and base price.
+
+The **Save / Load Sim** panel offers two ways to keep them:
+
+- **Named saves (this browser):** type a name and **Save** to store the current
+  setup in `localStorage`; saved sims persist across reloads and can be **Load**ed,
+  overwritten (**Update**), or deleted (✕).
+- **Share code:** the same setup encoded as a single base64 string you can copy to
+  share or paste in + **Load** to restore exactly. Malformed or unknown-class codes
+  are reported without disturbing the current setup.
+
+(Both live in `src/settings.ts`.)
 
 ### Stop limit
 
@@ -186,7 +234,8 @@ table in the UI is editable and saved per-browser, overriding the defaults.
 ## Data
 
 The app supports multiple **item classes** (pick one in *Base & Setup*):
-currently **Bow** and **Dex/Int Boots** (evasion/energy-shield). Each class has
+currently **Bow** (weapon), **Dex/Int Boots** (evasion/energy-shield armour),
+and **Amulet** / **Ring** (jewellery — no base stats, implicit-driven). Each class has
 its own generated `<key>.bases.json`, `<key>.mods.json`, `<key>.essences.json`
 plus a hand-authored `<key>.desecrated.json`. Add a class by adding a config to
 `CLASSES` in `tools/extract-item-data.lua` and registering it in

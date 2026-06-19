@@ -1,0 +1,87 @@
+[
+  {
+    "id": "DesAmuletLife",
+    "type": "Prefix",
+    "affix": "Ulaman's",
+    "boss": "Ulaman",
+    "group": "IncreasedLife",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(60-80) to maximum Life"
+    ],
+    "tags": [
+      "life",
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesAmuletSpirit",
+    "type": "Prefix",
+    "affix": "Amanamu's",
+    "boss": "Amanamu",
+    "group": "BaseSpirit",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(15-20) to Spirit"
+    ],
+    "tags": [
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesAmuletMana",
+    "type": "Prefix",
+    "affix": "Ulaman's",
+    "boss": "Ulaman",
+    "group": "IncreasedMana",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(40-60) to maximum Mana"
+    ],
+    "tags": [
+      "mana",
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesAmuletAllRes",
+    "type": "Suffix",
+    "affix": "Kurgal's",
+    "boss": "Kurgal",
+    "group": "AllResistances",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(10-15)% to all Elemental Resistances"
+    ],
+    "tags": [
+      "resistance",
+      "elemental",
+      "desecrated"
+    ],
+    "desecrated": true
+  },
+  {
+    "id": "DesAmuletAllAttributes",
+    "type": "Suffix",
+    "affix": "Amanamu's",
+    "boss": "Amanamu",
+    "group": "AllAttributes",
+    "level": 65,
+    "weight": 1000,
+    "lines": [
+      "+(8-12) to all Attributes"
+    ],
+    "tags": [
+      "attribute",
+      "desecrated"
+    ],
+    "desecrated": true
+  }
+]

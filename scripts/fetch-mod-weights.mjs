@@ -22,10 +22,12 @@ const DATA = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data");
 const TARGETS = [
   { name: "bow", url: "https://poe2db.tw/us/Bows", file: "bow.mods.json" },
   { name: "dexIntBoots", url: "https://poe2db.tw/us/Boots_dex_int", file: "dexIntBoots.mods.json" },
+  { name: "amulet", url: "https://poe2db.tw/us/Amulets", file: "amulet.mods.json" },
+  { name: "ring", url: "https://poe2db.tw/us/Rings", file: "ring.mods.json" },
 ];
 
 const RE =
-  /"Name":"([^"]*)","Level":"(\d+)","ModGenerationTypeID":"(\d+)","ModFamilyList":\[[^\]]*\],"DropChance":"(\d+)"/g;
+  /"Name":"([^"]*)","Level":"(\d+)","ModGenerationTypeID":"(\d+)","ModFamilyList":\[[^\]]*\],"DropChance":"?(\d+)"?/g;
 
 function key(name, level) {
   return name.trim().toLowerCase() + "|" + level;

@@ -6,9 +6,14 @@
     "boss": "Kurgal",
     "group": "MovementVelocity",
     "level": 65,
-    "weight": 100,
-    "lines": ["(20-30)% increased Movement Speed"],
-    "tags": ["speed", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(20-30)% increased Movement Speed"
+    ],
+    "tags": [
+      "speed",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -18,9 +23,16 @@
     "boss": "Ulaman",
     "group": "DesBootsDefences",
     "level": 65,
-    "weight": 100,
-    "lines": ["(60-80)% increased Evasion and Energy Shield"],
-    "tags": ["defences", "evasion", "energy_shield", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(60-80)% increased Evasion and Energy Shield"
+    ],
+    "tags": [
+      "defences",
+      "evasion",
+      "energy_shield",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -30,9 +42,14 @@
     "boss": "Amanamu",
     "group": "DesBootsLifeRegen",
     "level": 65,
-    "weight": 100,
-    "lines": ["Regenerate (1.5-2.5)% of maximum Life per second"],
-    "tags": ["life", "desecrated"],
+    "weight": 1000,
+    "lines": [
+      "Regenerate (1.5-2.5)% of maximum Life per second"
+    ],
+    "tags": [
+      "life",
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -42,9 +59,13 @@
     "boss": "Kurgal",
     "group": "DesBootsAilmentThreshold",
     "level": 65,
-    "weight": 100,
-    "lines": ["(20-30)% reduced Slowing Potency of Debuffs on You"],
-    "tags": ["desecrated"],
+    "weight": 1000,
+    "lines": [
+      "(20-30)% reduced Slowing Potency of Debuffs on You"
+    ],
+    "tags": [
+      "desecrated"
+    ],
     "desecrated": true
   },
   {
@@ -54,9 +75,13 @@
     "boss": "Amanamu",
     "group": "DesBootsSpirit",
     "level": 65,
-    "weight": 100,
-    "lines": ["+(10-15) to maximum Spirit"],
-    "tags": ["desecrated"],
+    "weight": 1000,
+    "lines": [
+      "+(10-15) to maximum Spirit"
+    ],
+    "tags": [
+      "desecrated"
+    ],
     "desecrated": true
   }
 ]

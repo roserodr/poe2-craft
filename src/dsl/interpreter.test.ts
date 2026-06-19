@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parse, parseCondition } from "./parser";
 import { run, evalCond } from "./interpreter";
-import { runBatch, runBatchAsync } from "./batch";
+import { runBatch, runBatchAsync, extractComparisons, runComparisonsAsync } from "./batch";
 import { newItem, totalAffixes, addSpecificMod } from "../engine/item";
 import { ALL_BASES, ALL_MODS } from "../engine/mods";
 import { RNG } from "../engine/rng";
@@ -109,6 +109,24 @@ describe("evalCond", () => {
     expect(evalCond(parseCondition('has prefix "physical" tier >= 2'), it)).toBe(false);
     expect(evalCond(parseCondition("has tier == 1"), it)).toBe(true);
     expect(evalCond(parseCondition('has suffix "physical" tier == 1'), it)).toBe(false);
+  });
+
+  it("counts matching affixes with a `has N ...` qualifier", () => {
+    const sufGroups = [...new Set(ALL_MODS.filter((m) => m.type === "Suffix").map((m) => m.group))];
+    const top = (g: string) =>
+      ALL_MODS.filter((m) => m.group === g).reduce((a, b) => (b.level > a.level ? b : a));
+    const it = newItem(BASE, 100);
+    it.rarity = "Rare";
+    addSpecificMod(it, top(sufGroups[0]), new RNG(1)); // T1 suffix
+    addSpecificMod(it, top(sufGroups[1]), new RNG(2)); // T1 suffix
+
+    // two T1 suffixes present
+    expect(evalCond(parseCondition("has 2 suffix tier == 1"), it)).toBe(true); // bare N => >=
+    expect(evalCond(parseCondition("has >= 2 suffix tier == 1"), it)).toBe(true);
+    expect(evalCond(parseCondition("has 3 suffix tier == 1"), it)).toBe(false);
+    expect(evalCond(parseCondition("has == 2 suffix tier == 1"), it)).toBe(true);
+    expect(evalCond(parseCondition("has == 1 suffix tier == 1"), it)).toBe(false);
+    expect(evalCond(parseCondition("has < 2 prefix"), it)).toBe(true); // 0 prefixes
   });
 
   it("a bare affix name matches exactly; non-names fall back to substring", () => {
@@ -295,12 +313,59 @@ describe("desecrate / reveal via DSL", () => {
     expect(mid.item.unrevealed).toBe(1);
     expect(evalCond(parseCondition("unrevealed"), mid.item)).toBe(true);
 
+    // reveal resolves the unrevealed affix into a concrete mod (which may be a
+    // regular mod or an Abyssal/desecrated one — the Well offers a mix).
+    const before = totalAffixes(mid.item) - mid.item.unrevealed; // concrete count
     const done = exec("alchemy\ndesecrate\nreveal");
     expect(done.item.unrevealed).toBe(0);
-    expect(
-      [...done.item.prefixes, ...done.item.suffixes].some((m) => m.desecrated)
-    ).toBe(true);
-    expect(evalCond(parseCondition("desecrated"), done.item)).toBe(true);
+    const concrete = done.item.prefixes.length + done.item.suffixes.length;
+    expect(concrete).toBe(before + 1);
+  });
+
+  it("reveal can offer regular mods, not only Abyssal ones", () => {
+    // across seeds at least one reveal resolves to a non-desecrated (regular) mod
+    let sawRegular = false;
+    let sawDesecrated = false;
+    for (let seed = 0; seed < 40 && !(sawRegular && sawDesecrated); seed++) {
+      const done = exec("alchemy\ndesecrate\nreveal", seed);
+      for (const m of [...done.item.prefixes, ...done.item.suffixes]) {
+        if (m.desecrated) sawDesecrated = true;
+      }
+      // a revealed concrete mod that isn't flagged desecrated is a regular reveal
+      if (done.item.unrevealed === 0) {
+        const anyDesec = [...done.item.prefixes, ...done.item.suffixes].some((m) => m.desecrated);
+        if (!anyDesec) sawRegular = true;
+      }
+    }
+    expect(sawRegular).toBe(true);
+  });
+
+  it("reveal pick biases the revealed mod toward the condition", () => {
+    // The reveal pool now mixes regular + Abyssal mods. "lightning" is a common,
+    // high-weight bow mod family, so it's frequently among the offered options.
+    // With `pick`, whenever it's offered it must be chosen — so the match-rate
+    // must dominate the random baseline (same seed ⇒ same options drawn).
+    const cond = parseCondition('has "lightning"');
+    let picked = 0;
+    let random = 0;
+    const N = 80;
+    for (let seed = 0; seed < N; seed++) {
+      const p = run(parse('alchemy\ndesecrate\nreveal pick has "lightning"'), fresh(), new RNG(seed));
+      const r = run(parse("alchemy\ndesecrate\nreveal"), fresh(), new RNG(seed));
+      if (evalCond(cond, p.item)) picked++;
+      if (evalCond(cond, r.item)) random++;
+    }
+    expect(picked).toBeGreaterThan(random);
+    expect(picked).toBeGreaterThan(0);
+  });
+
+  it("reveal pick still reveals an affix when no option matches", () => {
+    const mid = run(parse("alchemy\ndesecrate"), fresh(), new RNG(3));
+    const before = mid.item.prefixes.length + mid.item.suffixes.length;
+    const res = run(parse('alchemy\ndesecrate\nreveal pick has "definitely-not-a-real-affix"'), fresh(), new RNG(3));
+    expect(res.item.unrevealed).toBe(0);
+    // falls back to a random pick — a concrete mod is still added
+    expect(res.item.prefixes.length + res.item.suffixes.length).toBe(before + 1);
   });
 });
 
@@ -310,5 +375,51 @@ describe("regression: documented sample flow", () => {
     expect(res.item.rarity).toBe("Rare");
     expect([...res.item.prefixes, ...res.item.suffixes].some((m) => m.essence)).toBe(true);
     expect(totalAffixes(res.item)).toBe(2);
+  });
+});
+
+describe("compare blocks (approach comparison)", () => {
+  const SRC = `
+    alchemy
+    compare has prefix "lightning" {
+      option "exalt" { while open prefix { exalt } }
+      option "perfect" { while open prefix { perfect exalt } }
+    }
+  `;
+
+  it("a single run takes the first option as the default path", () => {
+    // should run alchemy + the first option's body without error
+    const res = exec(SRC);
+    expect(res.item.rarity).toBe("Rare");
+    expect(res.spent.alchemy).toBe(1);
+  });
+
+  it("extracts one group per compare block, sharing non-compare statements", () => {
+    const groups = extractComparisons(parse(SRC));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].condText).toContain("lightning");
+    expect(groups[0].options.map((o) => o.name)).toEqual(["exalt", "perfect"]);
+    // each option program keeps the shared `alchemy` prefix
+    for (const o of groups[0].options) {
+      expect(o.program[0]).toMatchObject({ kind: "currency", name: "alchemy" });
+    }
+  });
+
+  it("runs a batch per option with the shared condition as target", async () => {
+    const groups = await runComparisonsAsync(parse(SRC), BASE, 82, 60, 7, {});
+    expect(groups).not.toBeNull();
+    expect(groups![0].options).toHaveLength(2);
+    for (const o of groups![0].options) {
+      expect(o.result.runs).toBe(60);
+      expect(o.result.successRate).toBeGreaterThanOrEqual(0);
+      expect(o.result.successRate).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("can be cancelled", async () => {
+    const groups = await runComparisonsAsync(parse(SRC), BASE, 82, 100, 1, {}, {
+      cancelled: () => true,
+    });
+    expect(groups).toBeNull();
   });
 });
