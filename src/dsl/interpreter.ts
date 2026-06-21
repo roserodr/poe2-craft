@@ -2,7 +2,7 @@ import type { Cond, CmpOp, Stmt } from "./ast";
 import type { Item } from "../engine/types";
 import { CURRENCY, totalAffixes, MAX_AFFIX, OMENS, cloneItem, addSpecificMod } from "../engine/item";
 import type { ModDef } from "../engine/types";
-import { renderModInline, modTier, groupLabel, AFFIX_NAMES, DESECRATED_MODS } from "../engine/mods";
+import { renderModInline, modTier, groupLabel, AFFIX_NAMES } from "../engine/mods";
 import { RNG } from "../engine/rng";
 
 export class RuntimeError extends Error {
@@ -21,6 +21,13 @@ export interface LogEntry {
   affixCount: number;
 }
 
+/** Cost charged to one `checkpoint "label"` segment (since the previous checkpoint). */
+export interface CheckpointSpan {
+  label: string;
+  cost: number; // currency cost in Exalted accumulated in this segment
+  steps: number; // currency operations in this segment
+}
+
 export interface RunResult {
   item: Item;
   log: LogEntry[];
@@ -30,6 +37,7 @@ export interface RunResult {
   stoppedEarly: boolean;
   budgetExceeded: boolean;
   limitReached: boolean; // hit the user-configured step/cost limit
+  marks: CheckpointSpan[]; // per-stage cost, delimited by `checkpoint` statements
 }
 
 const DEFAULT_BUDGET = 200_000;
@@ -154,6 +162,9 @@ class Interp {
   ops = 0;
   steps = 0; // currency operations executed
   cost = 0; // accumulated currency cost in Exalted
+  marks: CheckpointSpan[] = []; // per-`checkpoint` segment costs
+  private markCostBase = 0; // cost at the previous checkpoint
+  private markStepBase = 0; // steps at the previous checkpoint
   budgetExceeded = false;
   stoppedEarly = false;
   limitReached = false;
@@ -197,6 +208,15 @@ class Interp {
     for (const s of body) this.runStmt(s);
   }
 
+  /** Close the trailing segment (cost after the last checkpoint). Only emitted
+   * when checkpoints are in use, so plain scripts carry no marks. */
+  finalizeMarks() {
+    if (this.marks.length === 0) return;
+    const cost = this.cost - this.markCostBase;
+    const steps = this.steps - this.markStepBase;
+    if (cost > 0 || steps > 0) this.marks.push({ label: "(after last checkpoint)", cost, steps });
+  }
+
   private runStmt(s: Stmt) {
     switch (s.kind) {
       case "currency": {
@@ -209,9 +229,8 @@ class Interp {
                 const clone = cloneItem(it);
                 // reveal consumes the unrevealed slot, freeing room for the mod
                 clone.unrevealed = Math.max(0, clone.unrevealed - 1);
-                // mirror reveal's flagging: only Abyssal mods are "desecrated"
-                const desecrated = DESECRATED_MODS.includes(options[i]);
-                if (addSpecificMod(clone, options[i], this.scratch, { desecrated }) && evalCond(pick, clone)) {
+                // mirror reveal's flagging: ANY desecration-revealed mod is desecrated
+                if (addSpecificMod(clone, options[i], this.scratch, { desecrated: true }) && evalCond(pick, clone)) {
                   return i;
                 }
               }
@@ -274,6 +293,17 @@ class Interp {
         if (s.options.length > 0) this.runBlock(s.options[0].body);
         break;
       }
+      case "checkpoint": {
+        // close the current segment: charge cost/steps since the last checkpoint
+        this.marks.push({
+          label: s.label,
+          cost: this.cost - this.markCostBase,
+          steps: this.steps - this.markStepBase,
+        });
+        this.markCostBase = this.cost;
+        this.markStepBase = this.steps;
+        break;
+      }
       case "stop":
         this.stoppedEarly = true;
         throw new StopSignal();
@@ -288,6 +318,7 @@ export function run(program: Stmt[], item: Item, rng: RNG, opts: RunOptions = {}
   } catch (e) {
     if (!(e instanceof StopSignal)) throw e;
   }
+  interp.finalizeMarks();
   const totalSpent = Object.values(interp.spent).reduce((a, b) => a + b, 0);
   return {
     item: interp.item,
@@ -298,5 +329,6 @@ export function run(program: Stmt[], item: Item, rng: RNG, opts: RunOptions = {}
     stoppedEarly: interp.stoppedEarly,
     budgetExceeded: interp.budgetExceeded,
     limitReached: interp.limitReached,
+    marks: interp.marks,
   };
 }

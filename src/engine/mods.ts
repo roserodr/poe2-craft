@@ -21,6 +21,33 @@ import ringMods from "../data/ring.mods.json";
 import ringEssences from "../data/ring.essences.json";
 import ringDesecrated from "../data/ring.desecrated.json";
 
+import evBodyBases from "../data/evBody.bases.json";
+import evBodyMods from "../data/evBody.mods.json";
+import evBodyEssences from "../data/evBody.essences.json";
+import evBodyDesecrated from "../data/evBody.desecrated.json";
+
+import gloveBases from "../data/gloves.bases.json";
+import gloveMods from "../data/gloves.mods.json";
+import gloveEssences from "../data/gloves.essences.json";
+import gloveDesecrated from "../data/gloves.desecrated.json";
+
+import esHelmBases from "../data/esHelm.bases.json";
+import esHelmMods from "../data/esHelm.mods.json";
+import esHelmEssences from "../data/esHelm.essences.json";
+import esHelmDesecrated from "../data/esHelm.desecrated.json";
+import spearBases from "../data/spear.bases.json";
+import spearMods from "../data/spear.mods.json";
+import spearEssences from "../data/spear.essences.json";
+import spearDesecrated from "../data/spear.desecrated.json";
+import sceptreBases from "../data/sceptre.bases.json";
+import sceptreMods from "../data/sceptre.mods.json";
+import sceptreEssences from "../data/sceptre.essences.json";
+import sceptreDesecrated from "../data/sceptre.desecrated.json";
+import wandBases from "../data/wand.bases.json";
+import wandMods from "../data/wand.mods.json";
+import wandEssences from "../data/wand.essences.json";
+import wandDesecrated from "../data/wand.desecrated.json";
+
 export interface EssenceDef {
   key: string;
   name: string;
@@ -76,6 +103,60 @@ export const ITEM_CLASSES: ItemClass[] = [
     mods: ringMods as ModDef[],
     essences: ringEssences as EssenceDef[],
     desecrated: ringDesecrated as ModDef[],
+  },
+  {
+    key: "evBody",
+    name: "Evasion Body Armour",
+    kind: "armour",
+    bases: evBodyBases as ItemBase[],
+    mods: evBodyMods as ModDef[],
+    essences: evBodyEssences as EssenceDef[],
+    desecrated: evBodyDesecrated as ModDef[],
+  },
+  {
+    key: "gloves",
+    name: "Str/Dex Gloves",
+    kind: "armour",
+    bases: gloveBases as ItemBase[],
+    mods: gloveMods as ModDef[],
+    essences: gloveEssences as EssenceDef[],
+    desecrated: gloveDesecrated as ModDef[],
+  },
+  {
+    key: "esHelm",
+    name: "ES Helmet",
+    kind: "armour",
+    bases: esHelmBases as ItemBase[],
+    mods: esHelmMods as ModDef[],
+    essences: esHelmEssences as EssenceDef[],
+    desecrated: esHelmDesecrated as ModDef[],
+  },
+  {
+    key: "spear",
+    name: "Spear",
+    kind: "weapon",
+    bases: spearBases as ItemBase[],
+    mods: spearMods as ModDef[],
+    essences: spearEssences as EssenceDef[],
+    desecrated: spearDesecrated as ModDef[],
+  },
+  {
+    key: "sceptre",
+    name: "Sceptre",
+    kind: "weapon",
+    bases: sceptreBases as ItemBase[],
+    mods: sceptreMods as ModDef[],
+    essences: sceptreEssences as EssenceDef[],
+    desecrated: sceptreDesecrated as ModDef[],
+  },
+  {
+    key: "wand",
+    name: "Wand",
+    kind: "weapon",
+    bases: wandBases as ItemBase[],
+    mods: wandMods as ModDef[],
+    essences: wandEssences as EssenceDef[],
+    desecrated: wandDesecrated as ModDef[],
   },
 ];
 

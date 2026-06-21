@@ -245,30 +245,6 @@ export function removeLowestMod(it: Item, rng: RNG, slot?: AffixType): RolledMod
   return target;
 }
 
-/** Add a mod that shares a tag with an existing mod (Omen of Homogenising Exaltation). */
-export function addHomogenising(it: Item, rng: RNG, minLvl = 0): boolean {
-  const used = usedGroups(it);
-  const tags = new Set<string>();
-  for (const m of allMods(it)) for (const t of m.def.tags) tags.add(t);
-  if (tags.size === 0) return false;
-  const pool = ALL_MODS.filter(
-    (m) =>
-      m.level <= it.ilvl &&
-      m.level >= minLvl &&
-      m.weight > 0 &&
-      !used.has(m.group) &&
-      (m.type === "Prefix" ? openPrefix(it) : openSuffix(it)) &&
-      m.tags.some((t) => tags.has(t))
-  );
-  if (pool.length === 0) return false;
-  const idx = rng.weighted(pool.map((m) => m.weight));
-  if (idx < 0) return false;
-  const rolled = rollMod(pool[idx], rng);
-  if (pool[idx].type === "Prefix") it.prefixes.push(rolled);
-  else it.suffixes.push(rolled);
-  return true;
-}
-
 // ---- Omens: each modifies the next use of a specific currency ----
 export interface Omen {
   key: string; // canonical, lowercase, no "omen of"
@@ -281,15 +257,12 @@ export const OMENS: Record<string, Omen> = {
   "sinistral exaltation": { key: "sinistral exaltation", label: "Omen of Sinistral Exaltation", currency: "exalt", desc: "Exalted Orb adds a prefix" },
   "dextral exaltation": { key: "dextral exaltation", label: "Omen of Dextral Exaltation", currency: "exalt", desc: "Exalted Orb adds a suffix" },
   "greater exaltation": { key: "greater exaltation", label: "Omen of Greater Exaltation", currency: "exalt", desc: "Exalted Orb adds two modifiers" },
-  "homogenising exaltation": { key: "homogenising exaltation", label: "Omen of Homogenising Exaltation", currency: "exalt", desc: "Exalted Orb adds a modifier sharing a tag with an existing one" },
   "sinistral erasure": { key: "sinistral erasure", label: "Omen of Sinistral Erasure", currency: "chaos", desc: "Chaos Orb removes a prefix" },
   "dextral erasure": { key: "dextral erasure", label: "Omen of Dextral Erasure", currency: "chaos", desc: "Chaos Orb removes a suffix" },
   "sinistral annulment": { key: "sinistral annulment", label: "Omen of Sinistral Annulment", currency: "annul", desc: "Annulment removes a prefix" },
   "dextral annulment": { key: "dextral annulment", label: "Omen of Dextral Annulment", currency: "annul", desc: "Annulment removes a suffix" },
-  whittling: { key: "whittling", label: "Omen of Whittling", currency: ["annul", "chaos"], desc: "Annulment/Chaos removes the lowest-level modifier" },
+  whittling: { key: "whittling", label: "Omen of Whittling", currency: "chaos", desc: "Chaos Orb removes the lowest-level modifier" },
   light: { key: "light", label: "Omen of Light", currency: "annul", desc: "Annulment removes only a desecrated modifier" },
-  "sinistral coronation": { key: "sinistral coronation", label: "Omen of Sinistral Coronation", currency: "regal", desc: "Regal Orb adds a prefix" },
-  "dextral coronation": { key: "dextral coronation", label: "Omen of Dextral Coronation", currency: "regal", desc: "Regal Orb adds a suffix" },
   "sinistral crystallisation": { key: "sinistral crystallisation", label: "Omen of Sinistral Crystallisation", currency: "essence", desc: "Perfect Essence removes a prefix" },
   "dextral crystallisation": { key: "dextral crystallisation", label: "Omen of Dextral Crystallisation", currency: "essence", desc: "Perfect Essence removes a suffix" },
   "sinistral necromancy": { key: "sinistral necromancy", label: "Omen of Sinistral Necromancy", currency: "reveal", desc: "Revealed desecrated modifier is a prefix" },
@@ -516,10 +489,12 @@ export const CURRENCY: Record<
         if (e.addSlot && m.type !== e.addSlot) return false;
         return slotHasRoom(m);
       };
-      // bone tier sets a minimum mod level (Ancient = 40), stripping low tiers
+      // bone tier sets a minimum mod level (Ancient = 40), stripping low REGULAR
+      // tiers. Desecrated/abyssal mods are not tiered (level 1) and not item-level
+      // gated, so the bone-tier minLvl does NOT apply to them.
       const minLvl = it.boneMinLevel ?? 0;
       const candidates = [
-        ...DESECRATED_MODS.filter((m) => m.level >= minLvl && eligible(m)),
+        ...DESECRATED_MODS.filter((m) => eligible(m)),
         ...ALL_MODS.filter((m) => m.weight > 0 && m.level >= minLvl && m.level <= it.ilvl && eligible(m)),
       ];
       if (candidates.length === 0) {
@@ -543,10 +518,10 @@ export const CURRENCY: Record<
           ? options[picked]
           : options[rng.int(0, options.length - 1)];
       it.unrevealed -= 1;
-      // only the Abyssal pool counts as a "desecrated" mod; a revealed regular
-      // mod is just a normal modifier.
-      const isDesecrated = DESECRATED_MODS.includes(chosen);
-      addSpecificMod(it, chosen, rng, { desecrated: isDesecrated });
+      // ANY modifier obtained from desecration is a desecrated mod — whether it
+      // came from the Abyssal-only pool or the regular pool. Flag all reveals so
+      // Omen of Light (removeRandomDesecrated) can remove them.
+      addSpecificMod(it, chosen, rng, { desecrated: true });
       return ok(`revealed "${chosen.affix}" (from ${options.length} option${options.length > 1 ? "s" : ""})`);
     },
   },
@@ -676,7 +651,6 @@ interface OmenEffects {
   count: number; // how many mods to add
   addSlot?: AffixType; // force added mods into this slot
   removeSlot?: AffixType; // restrict removal to this slot
-  homogenising: boolean; // added mods must share a tag with an existing one
   lowest: boolean; // removal targets the lowest-level mod
   echoes: boolean; // reveal offers extra options (Abyssal Echoes)
   catalysing: boolean; // catalyst applies maximum quality at once
@@ -684,23 +658,18 @@ interface OmenEffects {
 }
 
 function omenEffects(omens: Omen[]): OmenEffects | { error: string } {
-  const e: OmenEffects = { count: 1, homogenising: false, lowest: false, echoes: false, catalysing: false, onlyDesecrated: false };
+  const e: OmenEffects = { count: 1, lowest: false, echoes: false, catalysing: false, onlyDesecrated: false };
   for (const o of omens) {
     switch (o.key) {
       case "greater exaltation":
         e.count = 2;
         break;
-      case "homogenising exaltation":
-        e.homogenising = true;
-        break;
       case "sinistral exaltation":
-      case "sinistral coronation":
       case "sinistral necromancy":
         if (e.addSlot === "Suffix") return { error: "conflicting omens (prefix and suffix)" };
         e.addSlot = "Prefix";
         break;
       case "dextral exaltation":
-      case "dextral coronation":
       case "dextral necromancy":
         if (e.addSlot === "Prefix") return { error: "conflicting omens (prefix and suffix)" };
         e.addSlot = "Suffix";
@@ -738,20 +707,19 @@ function pluralize(w: string): string {
   return w.endsWith("ix") ? w.slice(0, -2) + "ixes" : w + "s";
 }
 
-/** Add `count` mods honoring forced slot / homogenising. */
+/** Add `count` mods honoring a forced slot. */
 function addWithOmens(it: Item, rng: RNG, minLvl: number, e: OmenEffects): { added: number; note: string } {
   let added = 0;
   for (let k = 0; k < e.count; k++) {
     let did = false;
-    if (e.homogenising) did = addHomogenising(it, rng, minLvl);
-    else if (e.addSlot)
+    if (e.addSlot)
       did =
         (e.addSlot === "Prefix" ? openPrefix(it) : openSuffix(it)) &&
         addRandomMod(it, e.addSlot, rng, minLvl);
     else did = addRandomAny(it, rng, minLvl);
     if (did) added++;
   }
-  const word = e.homogenising ? "matching modifier" : e.addSlot ? e.addSlot.toLowerCase() : "modifier";
+  const word = e.addSlot ? e.addSlot.toLowerCase() : "modifier";
   const note = added === 1 ? `added a ${word}` : `added ${added} ${pluralize(word)}`;
   return { added, note };
 }

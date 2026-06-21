@@ -10,6 +10,7 @@ export type Stmt =
   | { kind: "until"; cond: Cond; body: Stmt[]; line: number }
   | { kind: "if"; cond: Cond; then: Stmt[]; else: Stmt[]; line: number }
   | { kind: "compare"; cond: Cond; options: CompareOption[]; line: number }
+  | { kind: "checkpoint"; label: string; line: number }
   | { kind: "stop"; line: number };
 
 /** One labelled approach within a `compare` block. */

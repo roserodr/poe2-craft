@@ -24,6 +24,12 @@ const TARGETS = [
   { name: "dexIntBoots", url: "https://poe2db.tw/us/Boots_dex_int", file: "dexIntBoots.mods.json" },
   { name: "amulet", url: "https://poe2db.tw/us/Amulets", file: "amulet.mods.json" },
   { name: "ring", url: "https://poe2db.tw/us/Rings", file: "ring.mods.json" },
+  { name: "evBody", url: "https://poe2db.tw/us/Body_Armours_dex", file: "evBody.mods.json" },
+  { name: "gloves", url: "https://poe2db.tw/us/Gloves_str_dex", file: "gloves.mods.json" },
+  { name: "esHelm", url: "https://poe2db.tw/us/Helmets_int", file: "esHelm.mods.json" },
+  { name: "spear", url: "https://poe2db.tw/us/Spears", file: "spear.mods.json" },
+  { name: "sceptre", url: "https://poe2db.tw/us/Sceptres", file: "sceptre.mods.json" },
+  { name: "wand", url: "https://poe2db.tw/us/Wands", file: "wand.mods.json" },
 ];
 
 const RE =
@@ -112,7 +118,9 @@ async function patch(target) {
 }
 
 async function main() {
-  for (const t of TARGETS) await patch(t);
+  // ONLY=<name> patches just that class (avoids re-scraping the others).
+  const only = process.env.ONLY;
+  for (const t of TARGETS) if (!only || t.name === only) await patch(t);
   if (DRY) console.log("\n(dry run — nothing written)");
 }
 

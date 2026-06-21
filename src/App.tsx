@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   ESSENCES,
   ALL_MODS,
@@ -11,6 +11,7 @@ import type { ModDef, Rarity } from "./engine/types";
 import { buildStartItem, CURRENCY, OMENS } from "./engine/item";
 import { RNG } from "./engine/rng";
 import { parse, parseCondition } from "./dsl/parser";
+import { highlightScript, formatScript } from "./dsl/highlight";
 import { run, type RunResult } from "./dsl/interpreter";
 import {
   runBatchAsync,
@@ -669,7 +670,12 @@ export default function App() {
 
           <div className="panel">
             <h2>Crafting Script</h2>
-            <textarea value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} />
+            <ScriptEditor value={script} onChange={setScript} />
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="secondary" onClick={() => setScript(formatScript(script))}>
+                Format
+              </button>
+            </div>
           </div>
 
           <div className="panel">
@@ -839,6 +845,64 @@ export default function App() {
           <HelpPanel />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Textarea with a syntax-highlight overlay + auto-indent for the crafting DSL. */
+function ScriptEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  const sync = () => {
+    if (taRef.current && preRef.current) {
+      preRef.current.scrollTop = taRef.current.scrollTop;
+      preRef.current.scrollLeft = taRef.current.scrollLeft;
+    }
+  };
+  const replace = (next: string, caret: number) => {
+    onChange(next);
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (ta) {
+        ta.selectionStart = ta.selectionEnd = caret;
+        sync();
+      }
+    });
+  };
+  function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    const ta = e.currentTarget;
+    const s = ta.selectionStart;
+    const en = ta.selectionEnd;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      replace(value.slice(0, s) + "  " + value.slice(en), s + 2);
+    } else if (e.key === "Enter") {
+      // keep the current line's indent, and add one level after an opening brace
+      e.preventDefault();
+      const lineStart = value.lastIndexOf("\n", s - 1) + 1;
+      const before = value.slice(lineStart, s);
+      const indent = (before.match(/^[ \t]*/) || [""])[0];
+      const extra = /\{\s*$/.test(before) ? "  " : "";
+      const ins = "\n" + indent + extra;
+      replace(value.slice(0, s) + ins + value.slice(en), s + ins.length);
+    }
+  }
+  return (
+    <div className="editor">
+      <pre
+        ref={preRef}
+        aria-hidden="true"
+        dangerouslySetInnerHTML={{ __html: highlightScript(value) + "\n" }}
+      />
+      <textarea
+        ref={taRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onScroll={sync}
+        onKeyDown={handleKey}
+        spellCheck={false}
+      />
     </div>
   );
 }
@@ -1148,6 +1212,9 @@ function BatchView({
         </tbody>
       </table>
       <CostHistogram hist={batch.costHistogram} basePrice={basePrice} />
+      {!compact && batch.checkpoints.length > 0 && (
+        <CheckpointBreakdown checkpoints={batch.checkpoints} prices={prices} />
+      )}
       {batch.sample && (
         <div style={{ marginTop: 12 }}>
           <div className="muted" style={{ marginBottom: 6 }}>
@@ -1156,6 +1223,78 @@ function BatchView({
           <ItemCard item={batch.sample} />
         </div>
       )}
+    </div>
+  );
+}
+
+function CheckpointBreakdown({
+  checkpoints,
+  prices,
+}: {
+  checkpoints: {
+    label: string;
+    avgCostEx: number;
+    avgSteps: number;
+    reachedFrac: number;
+    reachedCostEx: number;
+    reachedSteps: number;
+  }[];
+  prices: Record<string, number>;
+}) {
+  // "conditional" = average cost among attempts that REACHED the stage (not diluted
+  // by attempts that stopped earlier); "per attempt" = averaged over all attempts.
+  const [conditional, setConditional] = useState(true);
+  const val = (c: (typeof checkpoints)[number]) => (conditional ? c.reachedCostEx : c.avgCostEx);
+  const stepVal = (c: (typeof checkpoints)[number]) => (conditional ? c.reachedSteps : c.avgSteps);
+  const total = checkpoints.reduce((s, c) => s + val(c), 0);
+  const peak = Math.max(1e-9, ...checkpoints.map(val));
+  const maxIdx = checkpoints.reduce((m, c, i) => (val(c) > val(checkpoints[m]) ? i : m), 0);
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div className="muted" style={{ marginBottom: 6, display: "flex", gap: 8, alignItems: "center" }}>
+        <span>
+          Cost by stage ({conditional ? "avg among attempts that reached the stage" : "avg per attempt"},
+          between <code>checkpoint</code>s):
+        </span>
+        <button className="secondary" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => setConditional((v) => !v)}>
+          {conditional ? "show per-attempt" : "show per-reached"}
+        </button>
+      </div>
+      <table className="metrics" style={{ width: "100%" }}>
+        <tbody>
+          {checkpoints.map((c, i) => {
+            const pct = total > 0 ? (val(c) / total) * 100 : 0;
+            const hot = i === maxIdx && total > 0;
+            return (
+              <tr key={c.label + i} className="mc-row">
+                <td style={{ maxWidth: 220, color: hot ? "var(--bad)" : undefined }}>{c.label}</td>
+                <td style={{ width: "40%" }}>
+                  <div
+                    style={{
+                      height: 10,
+                      width: `${Math.max(2, (val(c) / peak) * 100)}%`,
+                      background: hot ? "var(--bad)" : "var(--accent)",
+                      borderRadius: 3,
+                    }}
+                  />
+                </td>
+                <td style={{ textAlign: "right", paddingRight: 8 }} className={hot ? "bad" : ""}>
+                  {unitCost(val(c), prices)}
+                </td>
+                <td style={{ textAlign: "right", color: "var(--muted)", paddingRight: 8 }}>
+                  {pct.toFixed(0)}%
+                </td>
+                <td style={{ textAlign: "right", color: "var(--muted)", paddingRight: 8 }}>
+                  {fmtCount(stepVal(c))} ops
+                </td>
+                <td style={{ textAlign: "right", color: "var(--muted)" }}>
+                  {(c.reachedFrac * 100).toFixed(0)}% reach
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1369,7 +1508,7 @@ function OmenPanel() {
       <p className="muted">
         An omen modifies the next currency use. Attach one (or more) with{" "}
         <code>with "..."</code>, e.g. <code>exalt with "sinistral"</code>,{" "}
-        <code>annul with "whittling"</code>. Combine compatible omens with{" "}
+        <code>chaos with "whittling"</code>. Combine compatible omens with{" "}
         <code>and</code> or another <code>with</code>, e.g.{" "}
         <code>exalt with "greater" and "sinistral"</code> (adds two prefixes).
       </p>
@@ -1449,7 +1588,7 @@ function HelpPanel() {
         <p>
           <b>Omens:</b> attach to a currency with <code>with "..."</code> to alter its
           behavior — e.g. <code>exalt with "sinistral"</code> (add a prefix),{" "}
-          <code>annul with "whittling"</code> (remove the lowest mod). See the Omens panel.
+          <code>chaos with "whittling"</code> (remove the lowest mod). See the Omens panel.
         </p>
         <p>
           <b>Catalysts</b> (rings &amp; amulets only): <code>catalyst "attribute"</code> adds
@@ -1499,6 +1638,15 @@ function HelpPanel() {
                 <code>stop</code>
               </td>
               <td>end the script immediately</td>
+            </tr>
+            <tr>
+              <td>
+                <code>checkpoint "label"</code>
+              </td>
+              <td>
+                mark the end of a stage; a Monte-Carlo run reports the average cost spent in each
+                stage (between checkpoints) so you can see which step is most expensive
+              </td>
             </tr>
             <tr>
               <td>

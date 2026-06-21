@@ -48,8 +48,8 @@ describe("parser: statements", () => {
       name: "exalt",
       omens: ["sinistral exaltation"],
     });
-    expect(parse('annul with "whittling"')[0]).toMatchObject({
-      name: "annul",
+    expect(parse('chaos with "whittling"')[0]).toMatchObject({
+      name: "chaos",
       omens: ["whittling"],
     });
     expect(parse('perfect chaos with "dextral erasure"')[0]).toMatchObject({

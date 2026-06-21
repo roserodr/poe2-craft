@@ -3,7 +3,7 @@ import { parse, parseCondition } from "./parser";
 import { run, evalCond } from "./interpreter";
 import { runBatch, runBatchAsync, extractComparisons, runComparisonsAsync } from "./batch";
 import { newItem, totalAffixes, addSpecificMod } from "../engine/item";
-import { ALL_BASES, ALL_MODS } from "../engine/mods";
+import { ALL_BASES, ALL_MODS, DESECRATED_MODS } from "../engine/mods";
 import { RNG } from "../engine/rng";
 import type { Item } from "../engine/types";
 
@@ -323,18 +323,18 @@ describe("desecrate / reveal via DSL", () => {
   });
 
   it("reveal can offer regular mods, not only Abyssal ones", () => {
-    // across seeds at least one reveal resolves to a non-desecrated (regular) mod
+    // The reveal pool mixes regular and Abyssal mods. (All reveals are FLAGGED
+    // desecrated — they're desecration-obtained — so we check the source POOL via
+    // the mod def, not the flag, to confirm regular mods can be revealed.)
     let sawRegular = false;
-    let sawDesecrated = false;
-    for (let seed = 0; seed < 40 && !(sawRegular && sawDesecrated); seed++) {
+    let sawAbyssal = false;
+    for (let seed = 0; seed < 60 && !(sawRegular && sawAbyssal); seed++) {
       const done = exec("alchemy\ndesecrate\nreveal", seed);
+      if (done.item.unrevealed !== 0) continue;
       for (const m of [...done.item.prefixes, ...done.item.suffixes]) {
-        if (m.desecrated) sawDesecrated = true;
-      }
-      // a revealed concrete mod that isn't flagged desecrated is a regular reveal
-      if (done.item.unrevealed === 0) {
-        const anyDesec = [...done.item.prefixes, ...done.item.suffixes].some((m) => m.desecrated);
-        if (!anyDesec) sawRegular = true;
+        if (!m.desecrated) continue; // only the freshly revealed mod is flagged
+        if (DESECRATED_MODS.includes(m.def)) sawAbyssal = true;
+        else sawRegular = true;
       }
     }
     expect(sawRegular).toBe(true);

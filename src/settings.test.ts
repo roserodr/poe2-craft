@@ -31,7 +31,7 @@ describe("sim settings round-trip", () => {
   });
 
   it("rejects an unknown item class", () => {
-    const code = encodeSettings({ ...SAMPLE, classKey: "wand" });
+    const code = encodeSettings({ ...SAMPLE, classKey: "nonexistent-class" });
     expect(() => decodeSettings(code)).toThrow(/unknown item class/);
   });
 

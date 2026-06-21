@@ -29,6 +29,18 @@ export interface BatchResult {
   cost: Stats;
   // binned histogram of per-attempt total currency cost (excludes base)
   costHistogram: { lo: number; hi: number; counts: number[] };
+  // per-`checkpoint` stage, in first-seen order. Empty when the script uses no
+  // `checkpoint` statements. avgCostEx/avgSteps are over ALL attempts; reachedFrac
+  // is the fraction of attempts that reached the stage, and reachedCostEx is the
+  // average cost among ONLY those that reached it (= avgCostEx / reachedFrac).
+  checkpoints: {
+    label: string;
+    avgCostEx: number;
+    avgSteps: number;
+    reachedFrac: number;
+    reachedCostEx: number;
+    reachedSteps: number;
+  }[];
 }
 
 export interface BatchOptions {
@@ -51,6 +63,8 @@ interface Acc {
   costs: number[]; // per-attempt currency cost (Exalted)
   totalCounts: number[]; // per-attempt total currency count
   countHist: Map<string, Map<number, number>>; // currency -> (count -> #runs)
+  ckTotals: Map<string, { cost: number; steps: number; reached: number }>; // label -> summed cost/steps + #runs reached
+  ckOrder: string[]; // checkpoint labels in first-seen order
 }
 
 function newAcc(seed: number): Acc {
@@ -64,6 +78,8 @@ function newAcc(seed: number): Acc {
     costs: [],
     totalCounts: [],
     countHist: new Map(),
+    ckTotals: new Map(),
+    ckOrder: [],
   };
 }
 
@@ -91,6 +107,20 @@ function step(
   acc.grandTotal += res.totalSpent;
   acc.costs.push(res.cost);
   acc.totalCounts.push(res.totalSpent);
+  const seenLabels = new Set<string>();
+  for (const m of res.marks) {
+    let t = acc.ckTotals.get(m.label);
+    if (!t) {
+      acc.ckTotals.set(m.label, (t = { cost: 0, steps: 0, reached: 0 }));
+      acc.ckOrder.push(m.label);
+    }
+    t.cost += m.cost;
+    t.steps += m.steps;
+    if (!seenLabels.has(m.label)) {
+      seenLabels.add(m.label);
+      t.reached += 1; // count each run at most once per label
+    }
+  }
   if (res.budgetExceeded) acc.budgetExceeded++;
   if (res.limitReached) acc.limitReached++;
   if (target && evalCond(target, res.item)) {
@@ -152,6 +182,17 @@ function finalize(acc: Acc, runs: number, hasTarget: boolean): BatchResult {
     totalCount: statsFromSorted([...acc.totalCounts].sort((a, b) => a - b), runs),
     cost: statsFromSorted(sortedCosts, runs),
     costHistogram: histogram(sortedCosts, 24),
+    checkpoints: acc.ckOrder.map((label) => {
+      const t = acc.ckTotals.get(label)!;
+      return {
+        label,
+        avgCostEx: t.cost / runs,
+        avgSteps: t.steps / runs,
+        reachedFrac: t.reached / runs,
+        reachedCostEx: t.reached > 0 ? t.cost / t.reached : 0,
+        reachedSteps: t.reached > 0 ? t.steps / t.reached : 0,
+      };
+    }),
   };
 }
 

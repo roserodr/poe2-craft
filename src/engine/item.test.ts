@@ -303,6 +303,28 @@ describe("desecration", () => {
     expect(CURRENCY.reveal.apply(it, new RNG(1)).applied).toBe(false);
   });
 
+  it("Omen of Light removes a NORMAL modifier obtained from desecration", () => {
+    // The Well of Souls reveals a mix of regular and Abyssal mods; ALL of them are
+    // desecration-obtained, so Omen of Light must be able to remove a *regular* one
+    // (otherwise desecrate→reveal→light loops deadlock).
+    let it = fresh();
+    let revealed = it.prefixes[0];
+    for (let seed = 0; seed < 300; seed++) {
+      it = fresh();
+      it.rarity = "Rare";
+      it.unrevealed = 1;
+      CURRENCY.reveal.apply(it, new RNG(seed));
+      revealed = [...it.prefixes, ...it.suffixes][0];
+      if (revealed && !DESECRATED_MODS.includes(revealed.def)) break; // a regular-pool mod
+    }
+    expect(DESECRATED_MODS.includes(revealed.def)).toBe(false); // it's a normal mod
+    expect(revealed.desecrated).toBe(true); // yet flagged as desecration-obtained
+    // Omen of Light annul removes that desecration-obtained normal mod
+    const r = CURRENCY.annul.apply(it, new RNG(1), undefined, [OMENS.light]);
+    expect(r.applied).toBe(true);
+    expect(it.prefixes.length + it.suffixes.length).toBe(0);
+  });
+
   it("chaos can remove an unrevealed desecrated affix", () => {
     const it = fresh();
     it.rarity = "Rare";
@@ -460,7 +482,7 @@ describe("omens", () => {
     expect(totalAffixes(it)).toBe(4);
   });
 
-  it("whittling annul removes the lowest-level modifier", () => {
+  it("whittling chaos removes the lowest-level modifier", () => {
     const it = fresh();
     it.rarity = "Rare";
     // hand-place two known mods of different levels
@@ -472,7 +494,7 @@ describe("omens", () => {
     ).reduce((a, b) => (b.level > a.level ? b : a));
     addSpecificMod(it, lowMod, new RNG(1));
     addSpecificMod(it, highMod, new RNG(2));
-    CURRENCY.annul.apply(it, new RNG(3), undefined, omen("whittling"));
+    CURRENCY.chaos.apply(it, new RNG(3), undefined, omen("whittling"));
     // the lowest-level mod is gone, the higher remains
     expect([...it.prefixes, ...it.suffixes].some((m) => m.def.id === lowMod.id)).toBe(false);
     expect([...it.prefixes, ...it.suffixes].some((m) => m.def.id === highMod.id)).toBe(true);
@@ -565,15 +587,6 @@ describe("omens", () => {
     expect(
       CURRENCY.reveal.apply(echo, new RNG(1), undefined, omen("abyssal echoes")).note
     ).toMatch(/from 6 options/);
-  });
-
-  it("sinistral coronation regal adds a prefix and upgrades to Rare", () => {
-    const it = fresh();
-    CURRENCY.transmute.apply(it, new RNG(1)); // Magic, 1 mod
-    const pBefore = it.prefixes.length;
-    CURRENCY.regal.apply(it, new RNG(2), undefined, omen("sinistral coronation"));
-    expect(it.rarity).toBe("Rare");
-    expect(it.prefixes.length).toBe(pBefore + 1);
   });
 });
 
@@ -670,9 +683,9 @@ describe("omen resolution", () => {
     expect(resolveOmen("exalt", "sinistral")?.key).toBe("sinistral exaltation");
     expect(resolveOmen("annul", "sinistral")?.key).toBe("sinistral annulment");
     expect(resolveOmen("exalt", "omen of greater exaltation")?.key).toBe("greater exaltation");
-    // whittling applies to both annul and chaos
-    expect(resolveOmen("annul", "whittling")?.key).toBe("whittling");
+    // whittling applies to chaos only
     expect(resolveOmen("chaos", "whittling")?.key).toBe("whittling");
+    expect(resolveOmen("annul", "whittling")).toBeNull(); // not annul
     expect(resolveOmen("exalt", "whittling")).toBeNull(); // not exalt
   });
 

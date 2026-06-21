@@ -126,6 +126,11 @@ class Parser {
       this.next();
       return { kind: "stop", line };
     }
+    if (w === "checkpoint" || w === "mark") {
+      this.next();
+      const label = this.expect("string").value;
+      return { kind: "checkpoint", label, line };
+    }
     // tiered orbs: `greater exalt`, `perfect chaos`
     if (w === "greater" || w === "perfect") {
       this.next();

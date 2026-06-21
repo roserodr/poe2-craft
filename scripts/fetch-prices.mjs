@@ -68,7 +68,6 @@ const ESTIMATES = {
   "sinistral exaltation": 150,
   "dextral exaltation": 150,
   "greater exaltation": 40,
-  "homogenising exaltation": 80,
   "sinistral coronation": 30,
   "dextral coronation": 30,
   "sinistral necromancy": 25,
